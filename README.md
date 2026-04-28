@@ -29,7 +29,7 @@ POST to http://192.168.1.1:8880/guest/s/default/login with those cookies
 
 #Scheduling logic:
 
-After a successful login, sleep ~7h50m, then start polling every 30 seconds for connectivity loss
+After a successful login, sleep ~7h59m, then start polling every 30 seconds for connectivity loss
 
 As soon as connectivity drops → trigger login immediately
 
@@ -43,8 +43,8 @@ Add to your ~/.bashrc so it auto-starts with WSL:
 ```bash
 sh
 ## Start portal watchdog if not already running
-if ! pgrep -f "login.sh" > /dev/null 2>&1; then
-    nohup /path/to/login.sh >> /tmp/portal_login.log 2>&1 &
+if ! pgrep -f "uqlogin.sh" > /dev/null 2>&1; then
+    nohup /path/to/uqlogin.sh >> /tmp/portal_login.log 2>&1 &
 fi
 ```
 
@@ -52,7 +52,7 @@ fi
 Go to Administration → Commands, paste this, and click Save Startup:
 ```bash
 sh
-sleep 30 && /jffs/login.sh >> /tmp/portal_login.log 2>&1 &
+sleep 30 && /jffs/uqlogin.sh >> /tmp/portal_login.log 2>&1 &
 ```
 
 The sleep 30 gives the router time to finish booting before the script starts. Store the script in /jffs/login.sh and make it executable:
