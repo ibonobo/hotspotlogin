@@ -7,7 +7,7 @@ LOGIN_URL="http://$PORTAL_HOST/guest/s/default/login"
 CHECK_URL="http://captive.apple.com/hotspot-detect.html"
 COOKIE_JAR="/tmp/ubnt_portal_cookies.txt"
 
-SESSION_DURATION=28200   # 7h50m in seconds — start polling before 8h expiry
+SESSION_DURATION=28790   # 7h59m in seconds — start polling before 8h expiry
 POLL_INTERVAL=30         # seconds between connectivity checks during watch window
 # ─────────────────────────────────────────────────────────
 
