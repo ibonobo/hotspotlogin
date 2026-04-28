@@ -41,7 +41,6 @@ This avoids hammering captive.apple.com all day, but reacts quickly when the ses
 ##WSL — run it as a background daemon
 Add to your ~/.bashrc so it auto-starts with WSL:
 ```bash
-sh
 ## Start portal watchdog if not already running
 if ! pgrep -f "uqlogin.sh" > /dev/null 2>&1; then
     nohup /path/to/uqlogin.sh >> /tmp/portal_login.log 2>&1 &
@@ -51,13 +50,11 @@ fi
 ##DD-WRT — run at boot
 Go to Administration → Commands, paste this, and click Save Startup:
 ```bash
-sh
 sleep 30 && /jffs/uqlogin.sh >> /tmp/portal_login.log 2>&1 &
 ```
 
 The sleep 30 gives the router time to finish booting before the script starts. Store the script in /jffs/login.sh and make it executable:
 ```bash
-sh
 chmod +x /jffs/login.sh
 ```
 
