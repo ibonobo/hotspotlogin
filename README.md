@@ -20,14 +20,14 @@ curl ^"http://192.168.1.1:8880/guest/s/default/login^" ^
   --insecure
 ```
 
-#Login flow:
+# Login flow:
 
 curl http://192.168.1.1:8882 → saves cookies, follows redirect to 8880 login page
 
 POST to http://192.168.1.1:8880/guest/s/default/login with those cookies
 
 
-#Scheduling logic:
+# Scheduling logic:
 
 After a successful login, sleep ~7h59m, then start polling every 30 seconds for connectivity loss
 
@@ -36,9 +36,9 @@ As soon as connectivity drops → trigger login immediately
 This avoids hammering captive.apple.com all day, but reacts quickly when the session actually expires
 
 
-#Scheduling
+# Scheduling
 
-##WSL — run it as a background daemon
+## WSL — run it as a background daemon
 Add to your ~/.bashrc so it auto-starts with WSL:
 ```bash
 ## Start portal watchdog if not already running
@@ -47,7 +47,7 @@ if ! pgrep -f "uqlogin.sh" > /dev/null 2>&1; then
 fi
 ```
 
-##DD-WRT — run at boot
+## DD-WRT — run at boot
 Go to Administration → Commands, paste this, and click Save Startup:
 ```bash
 sleep 30 && /jffs/uqlogin.sh >> /tmp/portal_login.log 2>&1 &
@@ -58,5 +58,27 @@ The sleep 30 gives the router time to finish booting before the script starts. S
 chmod +x /jffs/login.sh
 ```
 
+## Termux (bash on Android)
 
-The key open question is still whether the ec cookie arrives via the HTTP redirect headers from 8882, or gets set by JavaScript. 
+Adjust the cookie jar path
+/tmp/ may not be writable in Termux. Use the home directory instead:
+```bash
+COOKIE_JAR="$HOME/ubnt_portal_cookies.txt"
+```
+And the log path in your startup command:
+```bash
+shnohup /path/to/login.sh >> $HOME/portal_login.log 2>&1 &
+```
+### Keeping it running in the background
+This is the main challenge on Android. The OS aggressively kills background processes to save battery. 
+You need to do all of the following:
+
+Acquire a wakelock — prevents the CPU from sleeping while the script runs. 
+Run this before starting the script, or tap the wakelock button in the Termux notification. 
+Disable battery optimization for Termux — go to Android Settings → Apps → Termux → Battery → select Unrestricted 
+Run in a Termux session, not background — keep Termux open with the script running in foreground, or use tmux to keep the session alive: 
+```bash
+pkg install tmux
+   tmux new -s portal
+   # then run the script inside tmux
+```
