@@ -38,7 +38,7 @@ This avoids hammering captive.apple.com all day, but reacts quickly when the ses
 
 # Scheduling
 
-## WSL — run it as a background daemon
+## WSL — run the shell script as a background daemon
 Add to your ~/.bashrc so it auto-starts with WSL:
 ```bash
 ## Start portal watchdog if not already running
@@ -67,7 +67,18 @@ Here's the log for a WSL run:
 [2026-04-29 04:18:14] Login successful.
 [2026-04-29 04:18:14] Session stable — sleeping 7h59m before watching...
 ```
-
+If you have some kind of bash cURL in Windows such as Git (bringing its own bash), you could also run 
+```bash
+"C:\Program Files\Git\bin\sh.exe" C:\path\to\uqlogin.sh
+```
+## Windows PowerShell
+I haven't tested this one, but I'm including it just in case: 
+```powershell
+# Allow local scripts (one-time, run as Admin)
+Set-ExecutionPolicy RemoteSigned
+# Start in background, logging to file
+Start-Process powershell -ArgumentList "-WindowStyle Hidden -File C:\path\to\portal-login.ps1" -RedirectStandardOutput "$env:TEMP\portal_login.log"
+```
 ## DD-WRT — run at boot
 Go to Administration → Commands, paste this, and click Save Startup:
 ```bash
