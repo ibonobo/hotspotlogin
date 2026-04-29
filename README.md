@@ -12,9 +12,9 @@ curl ^"http://192.168.1.1:8880/guest/s/default/login^" ^
   -H ^"Accept-Language: en-US^" ^
   -H ^"Connection: keep-alive^" ^
   -H ^"Content-Length: 0^" ^
-  -b ^"ec=RIWnnS4f319_hfWZ53KU4n0UyQ6ztBtqKqdYPn-42BmowgA5ZykMqJ9rltetCJzHrKSzHLa1zPs4lD0K_uyj3ZOgEqjIpQK6lx7QhxlVlW61iOwDJm1A95s4csRcNJxFl_p95gfeSUJmQdJtRz4BV_SLKh43r28zBrxpqwFgQiCjF1WbeKlyyr6fPblw8ssfJhysvIn5WNljJ051IKG_0A^" ^
+  -b ^"ec=RI..G_0A^" ^
   -H ^"Origin: http://192.168.1.1:8880^" ^
-  -H ^"Referer: http://192.168.1.1:8880/guest/s/default/?ap=2#:7#:#e:ca:df:##^&ec=_9YNgaT9HHxsqTwoEUyebA9rKnWZ31OfbtCXSG0tbve3IMyLux0wXH7hqbY0OynwjoUhf9IIrtXal3nemyZypJR0_qmyCxunjjahrPk-5PxkmR9hP69PqP81qaO8YKawQO8m6cIB0UUDZ4K2WkpZI2qvRw6Ct0CJTMnD9VpIqSMI7AyJFBK_5fAE_3pumSp4^" ^
+  -H ^"Referer: http://192.168.1.1:8880/guest/s/default/?ap=2#:7#:#e:ca:df:##^&ec=_9YN..mSp4^" ^
   -H ^"User-Agent: ..." ^
   -H ^"sec-gpc: 1^" ^
   --insecure
