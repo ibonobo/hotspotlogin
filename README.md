@@ -99,7 +99,7 @@ COOKIE_JAR="$HOME/ubnt_portal_cookies.txt"
 ```
 And the log path in your startup command:
 ```bash
-shnohup /path/to/login.sh >> $HOME/portal_login.log 2>&1 &
+nohup /data/data/com.termux/files/home/uqlogin.sh >> $HOME/portal_login.log 2>&1 &
 ```
 ### Keeping it running in the background
 This is the main challenge on Android. The OS aggressively kills background processes to save battery. 
@@ -114,3 +114,17 @@ pkg install tmux
    tmux new -s portal
    # then run the script inside tmux
 ```
+### Log
+Here's the log for the first Termux run:
+```bash
+nohup: ignoring input
+[2026-04-30 08:21:26] Portal login watchdog started.
+[2026-04-30 08:21:26] Starting login flow...
+[2026-04-30 08:21:26] Redirected to: http://192.168.1.1:8880/guest/s/default/?ap
+=##:##:##:##:##:##&ec=_9Y...eF
+[2026-04-30 08:21:26] Login POST returned HTTP 200
+[2026-04-30 08:21:26] Login successful.
+[2026-04-30 08:21:26] Session stable — sleeping 8h0m before watching...
+```
+(At first, it was on Data and it reported "Login POST returned HTTP 000 / Login may have failed — unexpected HTTP 000. Make sure Data is off before running it.)
+It's worth mentioning that not all smartphones have "wi-fi tethering" or the ability to act as a router / repeater. This is a feature found usually in more premium or flagship models.
