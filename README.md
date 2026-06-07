@@ -80,14 +80,14 @@ Set-ExecutionPolicy RemoteSigned
 Start-Process powershell -ArgumentList "-WindowStyle Hidden -File C:\path\to\portal-login.ps1" -RedirectStandardOutput "$env:TEMP\portal_login.log"
 ```
 ## DD-WRT — run at boot
-Go to Administration → Commands, paste this, and click Save Startup:
+Go to Administration → Commands, paste this, and click Save Startup :
 ```bash
-sleep 30 && /jffs/uqlogin.sh >> /tmp/portal_login.log 2>&1 &
+sleep 15 && /opt/usr/bin/uqlogin.sh >> /tmp/hsportal_login.log 2>&1 &
 ```
 
-The sleep 30 gives the router time to finish booting before the script starts. Store the script in /jffs/login.sh and make it executable:
+The sleep 15 (or even 30) gives the router time to finish booting before the script starts. Store the script in /opt/usr/bin/login.sh (use opt if using an ext2 formatted USB drive - recommended!, jffs if using the router's storage) and make it executable:
 ```bash
-chmod +x /jffs/login.sh
+chmod +x /opt/usr/bin/login.sh
 ```
 
 ## Termux (bash on Android)
