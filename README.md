@@ -36,7 +36,7 @@ As soon as connectivity drops → trigger login immediately
 This avoids hammering captive.apple.com all day, but reacts quickly when the session actually expires
 
 
-# Scheduling
+# Scheduling instructions
 
 ## WSL — run the shell script as a background daemon
 Add to your ~/.bashrc so it auto-starts with WSL:
@@ -46,8 +46,11 @@ if ! pgrep -f "uqlogin.sh" > /dev/null 2>&1; then
     nohup /path/to/uqlogin.sh >> /tmp/portal_login.log 2>&1 &
 fi
 ```
+
 ### Log
+
 Here's the log for a WSL run of uqlogin.sh:
+
 ```bash
 [2026-04-28 20:16:52] Portal login watchdog started.
 [2026-04-28 20:16:52] Starting login flow...
@@ -67,63 +70,90 @@ Here's the log for a WSL run of uqlogin.sh:
 [2026-04-29 04:18:14] Login successful.
 [2026-04-29 04:18:14] Session stable — sleeping 7h59m before watching...
 ```
+
 If you have some kind of bash cURL in Windows such as Git (bringing its own bash), you could also run 
+
 ```bash
 "C:\Program Files\Git\bin\sh.exe" C:\path\to\uqlogin.sh
 ```
+
 WSL does some funky stuff with the networking, so running CURL at the command prompt (ms-dos) level may be better.
+
 ## Windows PowerShell - portal-login.ps1
+
 I haven't tested this one, but I'm including the instructions for when I'll feel like it (though even on Windows curl is probably easier to install and run in the event it's not already there): 
+
 ```powershell
 # Allow local scripts (one-time, run as Admin)
 Set-ExecutionPolicy RemoteSigned
 # Start in background, logging to file
 Start-Process powershell -ArgumentList "-WindowStyle Hidden -File C:\path\to\portal-login.ps1" -RedirectStandardOutput "$env:TEMP\portal_login.log"
 ```
+
 ## DD-WRT — run uqlogin.sh at boot
-The difficutly with DD-WRT is that for the most part, the default distribution might not include curl. It can still be installed via Entware. If going that route, you have to first identify your router distribution (MIPS big endian in my test case) and get the install script for that. In my case, I found that wget kept timing out. I was only able to load http://bin.entware.net/mipssf-k3.4/ in my Edge browser; Firefox and Chromium on an older, 32bit linux laptop through the router timed out as well. Seeting up Entware on the USB stick ended up being very time-consuming.
+
+The difficutly with DD-WRT is that for the most part, the default distribution might not include curl. It can still be installed via Entware. If going that route, you have to first identify your router distribution (MIPS big endian in my test case) and get the install script for that. In my case, I found that wget kept timing out. I was only able to load http://bin.entware.net/mipssf-k3.4/ in an Edge browser; Firefox and Chromium on an older, 32bit linux laptop through the router timed out as well. Thus, setting up Entware on the USB stick ended up being very time-consuming.
+
 Go to Administration → Commands, paste this, and click Save Startup :
 ```bash
 sleep 15 && /opt/usr/bin/uqlogin.sh >> /tmp/hsportal_login.log 2>&1 &
 ```
 
 The sleep 15 (or even 30) gives the router time to finish booting before the script starts. Store the script in /opt/usr/bin/login.sh (use opt if using an ext2 formatted USB drive - recommended!, jffs if using the router's storage) and make it executable:
+
 ```bash
 chmod +x /opt/usr/bin/uqlogin.sh
 ```
+
 ###Log
+```bash
 [2026-06-07 08:56:53] Portal login watchdog started.
 [2026-06-07 08:56:53] Starting login flow...
 [2026-04-30 08:56:54] Redirected to: http://192.168.1.1:8880/guest/s/default/?ap=##:##:##:##:##:##&ec=_9E...F4
 [2026-04-30 08:56:54] Login POST returned HTTP 200
 [2026-04-30 08:56:54] Login successful.
 [2026-04-30 08:56:54] Session stable — sleeping 8h0m before watching...
+```
 
 ## Termux (bash on Android)
+
 Adjust the cookie jar path
+
 /tmp/ may not be writable in Termux. Use the home directory instead:
+
 ```bash
 COOKIE_JAR="$HOME/ubnt_portal_cookies.txt"
 ```
+
 And the log path in your startup command:
 ```bash
 nohup /data/data/com.termux/files/home/uqlogin.sh >> $HOME/portal_login.log 2>&1 &
 ```
+
 ### Keeping it running in the background
+
 This is the main challenge on Android. The OS aggressively kills background processes to save battery. 
+
 You need to do all of the following:
 
 Acquire a wakelock — prevents the CPU from sleeping while the script runs. 
+
 Run this before starting the script, or tap the wakelock button in the Termux notification. 
+
 Disable battery optimization for Termux — go to Android Settings → Apps → Termux → Battery → select Unrestricted 
+
 Run in a Termux session, not background — keep Termux open with the script running in foreground, or use tmux to keep the session alive: 
+
 ```bash
 pkg install tmux
    tmux new -s portal
    # then run the script inside tmux
 ```
+
 ### Log
+
 Here's the log for the first Termux run:
+
 ```bash
 nohup: ignoring input
 [2026-04-30 08:21:26] Portal login watchdog started.
@@ -133,5 +163,6 @@ nohup: ignoring input
 [2026-04-30 08:21:26] Login successful.
 [2026-04-30 08:21:26] Session stable — sleeping 8h0m before watching...
 ```
+
 (At first, it was on Data and it reported "Login POST returned HTTP 000 / Login may have failed — unexpected HTTP 000. Make sure Data is off before running it.)
 It's worth mentioning that not all smartphones have "wi-fi tethering" or the ability to act as a router / repeater. This is a feature found usually in more premium or flagship models.
