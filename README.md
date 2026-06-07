@@ -47,7 +47,7 @@ if ! pgrep -f "uqlogin.sh" > /dev/null 2>&1; then
 fi
 ```
 ### Log
-Here's the log for a WSL run:
+Here's the log for a WSL run of uqlogin.sh:
 ```bash
 [2026-04-28 20:16:52] Portal login watchdog started.
 [2026-04-28 20:16:52] Starting login flow...
@@ -71,15 +71,17 @@ If you have some kind of bash cURL in Windows such as Git (bringing its own bash
 ```bash
 "C:\Program Files\Git\bin\sh.exe" C:\path\to\uqlogin.sh
 ```
-## Windows PowerShell
-I haven't tested this one, but I'm including it just in case: 
+WSL does some funky stuff with the networking, so running CURL at the command prompt (ms-dos) level may be better.
+## Windows PowerShell - portal-login.ps1
+I haven't tested this one, but I'm including the instructions for when I'll feel like it (though even on Windows curl is probably easier to install and run in the event it's not already there): 
 ```powershell
 # Allow local scripts (one-time, run as Admin)
 Set-ExecutionPolicy RemoteSigned
 # Start in background, logging to file
 Start-Process powershell -ArgumentList "-WindowStyle Hidden -File C:\path\to\portal-login.ps1" -RedirectStandardOutput "$env:TEMP\portal_login.log"
 ```
-## DD-WRT — run at boot
+## DD-WRT — run uqlogin.sh at boot
+The difficutly with DD-WRT is that for the most part, the default distribution might not include curl. It can still be installed via Entware. If going that route, you have to first identify your router distribution (MIPS big endian in my test case) and get the install script for that. In my case, I found that wget kept timing out. I was only able to load http://bin.entware.net/mipssf-k3.4/ in my Edge browser; Firefox and Chromium on an older, 32bit linux laptop through the router timed out as well. Seeting up Entware on the USB stick ended up being very time-consuming.
 Go to Administration → Commands, paste this, and click Save Startup :
 ```bash
 sleep 15 && /opt/usr/bin/uqlogin.sh >> /tmp/hsportal_login.log 2>&1 &
@@ -87,11 +89,17 @@ sleep 15 && /opt/usr/bin/uqlogin.sh >> /tmp/hsportal_login.log 2>&1 &
 
 The sleep 15 (or even 30) gives the router time to finish booting before the script starts. Store the script in /opt/usr/bin/login.sh (use opt if using an ext2 formatted USB drive - recommended!, jffs if using the router's storage) and make it executable:
 ```bash
-chmod +x /opt/usr/bin/login.sh
+chmod +x /opt/usr/bin/uqlogin.sh
 ```
+###Log
+[2026-06-07 08:56:53] Portal login watchdog started.
+[2026-06-07 08:56:53] Starting login flow...
+[2026-04-30 08:56:54] Redirected to: http://192.168.1.1:8880/guest/s/default/?ap=##:##:##:##:##:##&ec=_9E...F4
+[2026-04-30 08:56:54] Login POST returned HTTP 200
+[2026-04-30 08:56:54] Login successful.
+[2026-04-30 08:56:54] Session stable — sleeping 8h0m before watching...
 
 ## Termux (bash on Android)
-
 Adjust the cookie jar path
 /tmp/ may not be writable in Termux. Use the home directory instead:
 ```bash
@@ -120,8 +128,7 @@ Here's the log for the first Termux run:
 nohup: ignoring input
 [2026-04-30 08:21:26] Portal login watchdog started.
 [2026-04-30 08:21:26] Starting login flow...
-[2026-04-30 08:21:26] Redirected to: http://192.168.1.1:8880/guest/s/default/?ap
-=##:##:##:##:##:##&ec=_9Y...eF
+[2026-04-30 08:21:26] Redirected to: http://192.168.1.1:8880/guest/s/default/?ap=##:##:##:##:##:##&ec=_9Y...eF
 [2026-04-30 08:21:26] Login POST returned HTTP 200
 [2026-04-30 08:21:26] Login successful.
 [2026-04-30 08:21:26] Session stable — sleeping 8h0m before watching...
