@@ -1,4 +1,5 @@
 #!/bin/sh
+#published at https://github.com/ibonobo/hotspotlogin
 
 # ── Config ────────────────────────────────────────────────
 PORTAL_TRIGGER="http://192.168.1.1:8882"
