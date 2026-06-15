@@ -1,4 +1,5 @@
 # portal-login.ps1
+# published at https://github.com/ibonobo/hotspotlogin
 
 $PortalTrigger = "http://192.168.1.1:8882"
 $PortalHost    = "192.168.1.1:8880"
