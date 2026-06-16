@@ -1,6 +1,7 @@
 #!/bin/sh
 # /opt/etc/uqlogent.sh — Ubiquiti captive portal login daemon
 # Entware/DD-WRT specific. Managed by /opt/etc/init.d/S99uqlogin (Entware rc.unslung)
+# published under GNU: github.com/ibonobo/hotspotlogin
 #
 # Boot sequence on DD-WRT (no RTC — clock starts at 1970):
 #   1. Wait for WiFi station association
@@ -63,13 +64,17 @@ clock_is_valid() {
 }
 
 # ── WiFi association check ────────────────────────────────
+#
+# /proc/net/wireless lists ONLY kernel-known wireless interfaces —
+# no wired interfaces, no lo, no parsing ambiguity.
+# Format (after 2 header lines):
+#   ath0: 0000   70.  -40.  -95.   0   0   0   0   0   0
+# The interface name is always in field 1 with a trailing colon.
 
-# Attempt to auto-detect the wireless station interface.
-# Returns the first wireless interface that iwconfig knows about.
+# Auto-detect: return the first interface listed in /proc/net/wireless.
 detect_wifi_iface() {
-    # iwconfig lists wireless interfaces; grep for lines without leading space
-    # (interface name lines) that aren't 'lo' or 'eth0'.
-    iwconfig 2>/dev/null | awk '/^[a-z]/ && !/^lo/ {print $1; exit}'
+    awk 'NR>2 {gsub(/:/, "", $1); print $1; exit}' \
+        /proc/net/wireless 2>/dev/null
 }
 
 get_wifi_iface() {
@@ -81,18 +86,28 @@ get_wifi_iface() {
 }
 
 # Returns 0 if the station interface is associated to an AP.
-# iwconfig shows "Access Point: AA:BB:CC:DD:EE:FF" when associated,
-# "Access Point: Not-Associated" (or "00:00:00:00:00:00") when not.
+# Reads link quality directly from /proc/net/wireless — no iwconfig needed.
+# The link quality field (3rd column) is 0 when unassociated, nonzero when linked.
+# Format: " wlan1: 0000   55.  -55.  -95.  ..."
+#                         ^^^— link quality (with trailing dot)
 wifi_associated() {
     _iface=$(get_wifi_iface)
     if [ -z "$_iface" ]; then
-        # No wireless interface found — can't check; assume associated
-        # (wired-only or interface name unknown) so we don't block forever.
-        log "WARNING: No wireless interface detected — skipping association check."
+        log "WARNING: No wireless interface in /proc/net/wireless — skipping association check."
         return 0
     fi
-    iwconfig "$_iface" 2>/dev/null \
-        | grep -qE 'Access Point: ([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}'
+    # Extract link quality for our interface; strip trailing dot; check > 0.
+    _link=$(awk -v iface="${_iface}:" '
+        $1 == iface {
+            gsub(/\./, "", $3)
+            print $3
+            exit
+        }
+    ' /proc/net/wireless 2>/dev/null)
+
+    # If the field is missing entirely, fall through as associated (safe default).
+    [ -z "$_link" ] && { log "WARNING: $_iface not found in /proc/net/wireless."; return 0; }
+    [ "$_link" -gt 0 ] 2>/dev/null
 }
 
 # Block until the WiFi station is associated.
@@ -102,18 +117,22 @@ wait_for_association() {
     while ! wifi_associated; do
         sleep "$ASSOC_POLL"
     done
-    log "WiFi associated on $(_iface=$(get_wifi_iface); echo "${_iface:-unknown}")."
+    log "WiFi associated on ${_iface:-$(detect_wifi_iface)}."
 }
 
 # ── Connectivity probe ────────────────────────────────────
 #
 # Returns one of three strings on stdout:
-#   "free"    — internet is unblocked (probe URL returned expected body)
-#   "portal"  — connected but traffic is intercepted (redirect or wrong body)
-#   "offline" — no HTTP response at all (timeout / no route)
+#   "free"    — internet unblocked (probe returned expected body)
+#   "portal"  — portal intercepts traffic, login needed (probe redirected)
+#   "offline" — no response at all (not associated / DHCP not settled)
+#
+# The Ubiquiti portal intercepts ALL HTTP traffic and redirects it (302)
+# before login — including captive.apple.com. After login, captive.apple.com
+# returns 200 with "Success" in the body. No response means offline.
+# A single probe URL therefore cleanly distinguishes all three states.
 
 probe_connectivity() {
-    # Fetch the probe URL without following redirects; capture code + body.
     _tmpbody=$(mktemp /tmp/uqprobe.XXXXXX 2>/dev/null || echo "/tmp/uqprobe.tmp")
     _code=$(curl -s \
         -o "$_tmpbody" \
@@ -127,26 +146,25 @@ probe_connectivity() {
     rm -f "$_tmpbody"
 
     case "$_code" in
-        "")
-            # curl returned nothing — no network path at all
-            echo "offline"
-            ;;
         200)
-            # Got a 200; check body to distinguish real internet from a
-            # portal that intercepts and serves its own 200 page.
             if echo "$_body" | grep -q "$PROBE_EXPECT"; then
                 echo "free"
             else
+                # 200 but wrong body — portal spoofing success page
                 echo "portal"
             fi
             ;;
         301|302|303|307|308)
-            # Redirect — classic captive portal intercept
+            # Portal intercepted the request
             echo "portal"
             ;;
-        *)
-            # Anything else (4xx, 5xx, etc.) — treat as offline
+        "")
+            # No response — not associated or DHCP not ready
             echo "offline"
+            ;;
+        *)
+            # Any other code — treat as portal (something is in the way)
+            echo "portal"
             ;;
     esac
 }
@@ -298,7 +316,7 @@ watch_loop() {
 # ── Main ──────────────────────────────────────────────────
 
 main() {
-    log "uqlogin started."
+    log "uqlogent started."
     mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null
 
     # Step 1: Wait for WiFi station to associate before doing anything.
