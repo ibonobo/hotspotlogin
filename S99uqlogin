@@ -1,0 +1,74 @@
+#!/bin/sh
+# /opt/etc/init.d/S99uqlogin
+# Entware rc.unslung init script for the uqlogent captive portal daemon.
+#
+# Install:
+#   cp uqlogent.sh /opt/etc/uqlogent.sh && chmod +x /opt/etc/uqlogent.sh
+#   cp S99uqlogin /opt/etc/init.d/S99uqlogin && chmod +x /opt/etc/init.d/S99uqlogin
+#
+# rc.unslung calls this with: start | stop | restart | check
+# "check" is the Entware spelling of "status".
+
+DAEMON=/opt/etc/uqlogent.sh
+NAME=uqlogent
+PIDFILE=/opt/var/run/${NAME}.pid
+LOGFILE=/opt/var/log/${NAME}.log
+
+. /opt/etc/init.d/rc.func          # Entware helper: ansi_red/green, etc.
+                                    # Safe to remove if not present on your build.
+
+start() {
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        echo "$NAME is already running (PID $(cat "$PIDFILE"))."
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$PIDFILE")" "$(dirname "$LOGFILE")" 2>/dev/null
+
+    # Launch daemon in background; redirect output to log.
+    "$DAEMON" >> "$LOGFILE" 2>&1 &
+    echo $! > "$PIDFILE"
+    echo "$NAME started (PID $(cat "$PIDFILE")). Log: $LOGFILE"
+}
+
+stop() {
+    if [ ! -f "$PIDFILE" ]; then
+        echo "$NAME is not running (no PID file)."
+        return 1
+    fi
+    _pid=$(cat "$PIDFILE")
+    if kill -0 "$_pid" 2>/dev/null; then
+        kill "$_pid"
+        # Give it up to 5s to exit cleanly before forcing.
+        _i=0
+        while kill -0 "$_pid" 2>/dev/null && [ "$_i" -lt 5 ]; do
+            sleep 1; _i=$(( _i + 1 ))
+        done
+        kill -0 "$_pid" 2>/dev/null && kill -9 "$_pid"
+        echo "$NAME stopped."
+    else
+        echo "$NAME: PID $_pid not running (stale PID file removed)."
+    fi
+    rm -f "$PIDFILE"
+}
+
+status() {
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        echo "$NAME is running (PID $(cat "$PIDFILE"))."
+        return 0
+    else
+        echo "$NAME is not running."
+        return 1
+    fi
+}
+
+case "$1" in
+    start)   start   ;;
+    stop)    stop    ;;
+    restart) stop; sleep 1; start ;;
+    check|status) status ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|check}"
+        exit 1
+        ;;
+esac
