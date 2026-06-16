@@ -108,6 +108,7 @@ chmod +x /opt/usr/bin/uqlogin.sh
 It took a while, but it did work.
 
 ###Log
+
 ```bash
 [2026-06-07 08:56:53] Portal login watchdog started.
 [2026-06-07 08:56:53] Starting login flow...
