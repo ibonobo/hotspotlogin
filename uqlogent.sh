@@ -15,7 +15,6 @@
 PORTAL_TRIGGER="http://192.168.1.1:8882"
 PORTAL_HOST="192.168.1.1:8880"
 LOGIN_URL="http://$PORTAL_HOST/guest/s/default/login"
-COOKIE_JAR="/tmp/ubnt_portal_cookies.txt"
 
 # Wireless client (station) interface — the one associated to the hotspot AP.
 # Common values: ath0 (Archer C7 / WR1043ND), eth1, wlan0.
@@ -174,33 +173,45 @@ probe_connectivity() {
 do_login() {
     log "Starting login flow..."
 
-    rm -f "$COOKIE_JAR"
-    REDIRECT_URL=$(curl -s \
-        -c "$COOKIE_JAR" \
-        -b "$COOKIE_JAR" \
+    # Step 1: Hit port 8882 — extract the redirect Location header.
+    # The session token 'ec' is a query parameter in the redirect URL,
+    # not an HTTP cookie. Example:
+    # Location: http://192.168.1.1:8880/guest/s/default/?ap=xx:xx&ec=XXXX
+    LOCATION=$(curl -s \
         -o /dev/null \
-        -w '%{url_effective}' \
-        -L \
+        -w '%{redirect_url}' \
+        --max-redirs 0 \
         --connect-timeout 10 \
         "$PORTAL_TRIGGER" \
         --insecure 2>/dev/null)
-    log "Redirected to: $REDIRECT_URL"
+    log "Redirect location: $LOCATION"
 
-    [ ! -s "$COOKIE_JAR" ] && log "WARNING: Cookie jar empty — login may fail."
+    if [ -z "$LOCATION" ]; then
+        log "Login failed — no redirect from portal trigger."
+        return 1
+    fi
 
+    # Extract the 'ec' parameter value from the redirect URL.
+    EC=$(echo "$LOCATION" | sed 's/.*[?&]ec=\([^&]*\).*/\1/')
+
+    if [ -z "$EC" ] || [ "$EC" = "$LOCATION" ]; then
+        log "Login failed — could not extract 'ec' from: $LOCATION"
+        return 1
+    fi
+    log "Extracted ec token (${#EC} chars)."
+
+    # Step 2: POST ec to the login endpoint as form data.
     HTTP_CODE=$(curl -s \
         -X POST \
-        -b "$COOKIE_JAR" \
-        -H "Content-Length: 0" \
+        -d "ec=${EC}" \
         -H "Origin: http://$PORTAL_HOST" \
-        -H "Referer: $REDIRECT_URL" \
+        -H "Referer: $LOCATION" \
         -o /dev/null \
         -w '%{http_code}' \
         --connect-timeout 10 \
         "$LOGIN_URL" \
         --insecure 2>/dev/null)
     log "Login POST returned HTTP $HTTP_CODE"
-    rm -f "$COOKIE_JAR"
 
     if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "302" ]; then
         log "Login successful."
