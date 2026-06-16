@@ -92,7 +92,7 @@ Start-Process powershell -ArgumentList "-WindowStyle Hidden -File C:\path\to\por
 
 ## DD-WRT — run uqlogin.sh at boot
 
-The difficutly with DD-WRT is that for the most part, the default distribution might not include curl. It can still be installed via Entware. If going that route, you have to first identify your router distribution (MIPS big endian in my test case) and get the install script for that. In my case, I found that wget kept timing out. I was only able to load http://bin.entware.net/mipssf-k3.4/ in an Edge browser; Firefox and Chromium on an older, 32bit linux laptop through the router timed out as well. Thus, setting up Entware on the USB stick ended up being very time-consuming.
+The difficutly with DD-WRT is that for the most part, the default distribution might not include curl. It can still be installed via Entware. If going that route, you have to first identify your router distribution (MIPS big endian in my test case) and get the install script for that. I found (early 2026) that wget kept timing out. I was only able to load http://bin.entware.net/mipssf-k3.4/ in an Edge browser; Firefox and Chromium on an older, 32bit linux laptop through the router timed out as well. Thus, setting up Entware on the USB stick ended up being very time-consuming.
 
 Go to Administration → Commands, paste this, and click Save Startup :
 ```bash
@@ -105,6 +105,8 @@ The sleep 15 (or even 30) gives the router time to finish booting before the scr
 chmod +x /opt/usr/bin/uqlogin.sh
 ```
 
+It took a while, but it did work.
+
 ###Log
 ```bash
 [2026-06-07 08:56:53] Portal login watchdog started.
@@ -114,6 +116,7 @@ chmod +x /opt/usr/bin/uqlogin.sh
 [2026-04-30 08:56:54] Login successful.
 [2026-04-30 08:56:54] Session stable — sleeping 8h0m before watching...
 ```
+A better use of existing Entware infrastructure is to modify the script and call it via its init.d directory, using s99uqlogin -> uqlogent.sh
 
 ## Termux (bash on Android)
 
