@@ -7,7 +7,7 @@ $LoginUrl      = "http://$PortalHost/guest/s/default/login"
 $CheckUrl      = "http://captive.apple.com/hotspot-detect.html"
 $CookieJar     = "$env:TEMP\ubnt_portal_cookies.txt"
 
-$SessionDuration = 28200  # 7h50m in seconds
+$SessionDuration = 28600  # 8h in seconds
 $PollInterval    = 30
 
 function Log($msg) {
