@@ -81,7 +81,7 @@ WSL does some funky stuff with the networking, so running CURL at the command pr
 
 ## Windows PowerShell - portal-login.ps1
 
-I haven't tested this one, but I'm including the instructions for when I'll feel like it (though even on Windows curl is probably easier to install and run in the event it's not already there): 
+The first test failed as some characters were somehow shifted, causing extra "quotation marks" to appear; I fixed it and it worked flawlessly. Here are the instructions: 
 
 ```powershell
 # Allow local scripts (one-time, run as Admin)
