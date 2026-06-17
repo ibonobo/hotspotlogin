@@ -117,6 +117,12 @@ wait_for_association() {
         sleep "$ASSOC_POLL"
     done
     log "WiFi associated on ${_iface:-$(detect_wifi_iface)}."
+    # Wait for DHCP lease — inet addr must appear before the portal is reachable.
+    log "Waiting for DHCP lease on ${_iface}..."
+    while ! ifconfig "$_iface" 2>/dev/null | grep -q "inet addr"; do
+        sleep "$ASSOC_POLL"
+    done
+    log "DHCP lease obtained on ${_iface}."
 }
 
 # ── Connectivity probe ────────────────────────────────────
@@ -268,17 +274,17 @@ wait_ntp_and_save_state() {
 # Outputs remaining seconds if recovery is possible, nothing otherwise.
 
 recover_remaining() {
-    [ -f "$STATE_FILE" ] || { log "No state file — starting fresh session."; return 1; }
+    [ -f "$STATE_FILE" ] || { log "No state file — starting fresh session." >&2; return 1; }
 
     _saved=$(cat "$STATE_FILE" 2>/dev/null)
     case "$_saved" in
         ''|*[!0-9]*)
-            log "State file corrupt — removing."
+            log "State file corrupt — removing." >&2
             rm -f "$STATE_FILE"; return 1 ;;
     esac
 
     if [ "$_saved" -lt "$MIN_VALID_EPOCH" ] 2>/dev/null; then
-        log "State file has pre-2020 timestamp — removing."
+        log "State file has pre-2020 timestamp — removing." >&2
         rm -f "$STATE_FILE"; return 1
     fi
 
@@ -286,19 +292,19 @@ recover_remaining() {
     _elapsed=$(( _now - _saved ))
 
     if [ "$_elapsed" -lt 0 ]; then
-        log "State timestamp is in the future (clock skew?) — ignoring."
+        log "State timestamp is in the future (clock skew?) — ignoring." >&2
         return 1
     fi
 
     if [ "$_elapsed" -ge "$SESSION_DURATION" ]; then
-        log "State: session window already elapsed (${_elapsed}s since login) — no recovery."
+        log "State: session window already elapsed (${_elapsed}s since login) — no recovery." >&2
         return 1
     fi
 
     _remaining=$(( SESSION_DURATION - _elapsed ))
     _hrs=$(( _remaining / 3600 ))
     _mins=$(( (_remaining % 3600) / 60 ))
-    log "State: rebooted ${_elapsed}s into session — recovering ${_hrs}h${_mins}m of sleep."
+    log "State: rebooted ${_elapsed}s into session — recovering ${_hrs}h${_mins}m of sleep." >&2
     echo "$_remaining"
 }
 
