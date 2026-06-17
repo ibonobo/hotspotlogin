@@ -56,7 +56,7 @@ function Do-Login {
         if (Test-Path $CookieJar) { Remove-Item $CookieJar }
         return $true
     } else {
-        Log "Login may have failed — unexpected HTTP $code."
+        Log "Login may have failed - unexpected HTTP $code."
         return $false
     }
 }
@@ -71,12 +71,12 @@ while ($true) {
     Log "Sleeping ${h}h${m}m before watch window..."
     Start-Sleep -Seconds $SessionDuration
 
-    Log "Watch window — polling every ${PollInterval}s..."
+    Log "Watch window - polling every ${PollInterval}s..."
     while ($true) {
         if (-not (Is-Online)) {
-            Log "Connectivity lost — triggering login."
+            Log "Connectivity lost - triggering login."
             if (Do-Login) { break }
-            Log "Login failed — retrying in ${PollInterval}s..."
+            Log "Login failed - retrying in ${PollInterval}s..."
         } else {
             Log "Still online..."
         }
