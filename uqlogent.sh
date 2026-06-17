@@ -1,7 +1,7 @@
 #!/bin/sh
+# licensed GNU at github.com/ibonobo/hotspotlogin
 # /opt/etc/uqlogent.sh — Ubiquiti captive portal login daemon
 # Entware/DD-WRT specific. Managed by /opt/etc/init.d/S99uqlogin (Entware rc.unslung)
-# published under GNU: github.com/ibonobo/hotspotlogin
 #
 # Boot sequence on DD-WRT (no RTC — clock starts at 1970):
 #   1. Wait for WiFi station association
@@ -222,27 +222,45 @@ do_login() {
     fi
 }
 
-# ── NTP wait + state save ─────────────────────────────────
-# Called after a successful login so the timestamp written is real.
+# ── NTP wait ─────────────────────────────────────────────
+# Blocks until the clock is valid or NTP_WAIT is exceeded.
+# Returns 0 if clock synced, 1 if timed out.
 
-wait_ntp_and_save_state() {
+wait_for_ntp() {
     log "Waiting up to ${NTP_WAIT}s for NTP clock sync..."
     _waited=0
     while [ "$_waited" -lt "$NTP_WAIT" ]; do
         sleep 5
         _waited=$(( _waited + 5 ))
         if clock_is_valid; then
-            _epoch=$(now_epoch)
-            mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null
-            if echo "$_epoch" > "$STATE_FILE" 2>/dev/null; then
-                log "State saved: epoch $_epoch (NTP synced after ${_waited}s)."
-            else
-                log "WARNING: Cannot write $STATE_FILE — check /opt/tmp exists and is writable."
-            fi
+            log "NTP synced after ${_waited}s."
             return 0
         fi
     done
-    log "WARNING: Clock still at 1970 after ${NTP_WAIT}s — state not saved (NTP failed?)."
+    log "WARNING: Clock still at 1970 after ${NTP_WAIT}s — NTP failed?"
+    return 1
+}
+
+# ── State save ────────────────────────────────────────────
+# Saves current epoch to state file. Call ONLY after clock is valid.
+
+save_state() {
+    _epoch=$(now_epoch)
+    mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null
+    if echo "$_epoch" > "$STATE_FILE" 2>/dev/null; then
+        log "State saved: epoch $_epoch."
+    else
+        log "WARNING: Cannot write $STATE_FILE — check /opt/tmp exists and is writable."
+    fi
+}
+
+# ── NTP wait + state save ─────────────────────────────────
+# Convenience wrapper — called after a successful login.
+
+wait_ntp_and_save_state() {
+    if wait_for_ntp; then
+        save_state
+    fi
 }
 
 # ── State recovery ────────────────────────────────────────
@@ -341,37 +359,32 @@ main() {
     case "$_conn" in
 
         free)
-            # Internet is already unblocked — we may be recovering from a
-            # reboot mid-session. Clock is valid (internet is up = NTP ran? 
-            # No — NTP needs time after association. Check validity first.)
+            # Internet already unblocked — Ubiquiti session still active from
+            # before the reboot. Never re-login here; just recover the timer.
+            # Clock may still be 1970 — wait for NTP before reading state.
+            if ! clock_is_valid; then
+                log "Internet up but clock invalid — waiting for NTP..."
+                wait_for_ntp
+                # wait_for_ntp may still fail; clock_is_valid guards recover_remaining
+            fi
+
             if clock_is_valid; then
                 RECOVERED=$(recover_remaining)
                 if [ -n "$RECOVERED" ]; then
-                    log "Internet already up; sleeping remaining ${RECOVERED}s of session."
+                    log "Recovering ${RECOVERED}s of remaining session sleep..."
                     sleep_seconds "$RECOVERED" "Recovered session sleep"
                 else
-                    # State expired or absent — treat as fresh, sleep full window.
-                    log "Internet already up; no valid state — sleeping full session."
-                    # Save a fresh timestamp now (clock is valid, internet is up).
-                    _epoch=$(now_epoch)
-                    mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null
-                    echo "$_epoch" > "$STATE_FILE" 2>/dev/null \
-                        && log "State saved: epoch $_epoch." \
-                        || log "WARNING: Cannot write $STATE_FILE."
+                    # State absent or expired — session duration unknown.
+                    # Sleep the full window conservatively; save state now.
+                    log "No valid state — sleeping full session window."
+                    save_state
                     sleep_seconds "$SESSION_DURATION" "Session sleep"
                 fi
             else
-                # Internet is up but clock still 1970 — NTP hasn't synced yet.
-                # Wait for NTP (it should sync quickly since we have internet).
-                log "Internet up but clock invalid — waiting for NTP..."
-                wait_ntp_and_save_state
-                # After NTP, check state
-                RECOVERED=$(recover_remaining)
-                if [ -n "$RECOVERED" ]; then
-                    sleep_seconds "$RECOVERED" "Recovered session sleep"
-                else
-                    sleep_seconds "$SESSION_DURATION" "Session sleep"
-                fi
+                # NTP never synced — can't trust any timestamp.
+                # Sleep full duration as a safe fallback.
+                log "NTP failed — sleeping full session window as fallback."
+                sleep_seconds "$SESSION_DURATION" "Session sleep"
             fi
             watch_loop
             ;;
