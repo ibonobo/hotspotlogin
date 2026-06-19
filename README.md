@@ -1,4 +1,4 @@
-This hotspot, running most likely off an Ubiquity router, kicks you out after about 8h of use. 
+This hotspot, running most likely off an Ubiquity router, kicks you off after about 8h of use. 
 
 For the login page, you have to open 192.168.1.1:8882, which will redirect you (probably with a cookie) to 192.168.1.1:8880
 
