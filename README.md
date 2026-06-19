@@ -128,7 +128,7 @@ It took a while, but it did work.
 A better use of existing Entware infrastructure is to modify the script and call it via a starter script, more precisely, /opt/etc/init.d/S99uqlogin starting /opt/etc/uqlogent.sh ; this also adds timer recovery on reboot and other specific enhancements.
 Upon discovering that the router disconnects in early morning (260619) I added a check to the heartbeat, written to log.
 
-##Reading the log output
+## Reading the log output
 
 Line                      Meaning
 net on                    WiFi associated, link quality > 0
