@@ -125,7 +125,18 @@ It took a while, but it did work.
 [2026-04-30 08:56:54] Login successful.
 [2026-04-30 08:56:54] Session stable — sleeping 8h0m before watching...
 ```
-A better use of existing Entware infrastructure is to modify the script and call it via a starter script, more precisely, /opt/etc/init.d/S99uqlogin starting /opt/etc/uqlogent.sh ; this also adds timer recovery on reboot and other specific enhancements
+A better use of existing Entware infrastructure is to modify the script and call it via a starter script, more precisely, /opt/etc/init.d/S99uqlogin starting /opt/etc/uqlogent.sh ; this also adds timer recovery on reboot and other specific enhancements.
+Upon discovering that the router disconnects in early morning (260619) I added a check to the heartbeat, written to log.
+
+##Reading the log output
+
+Line                      Meaning
+net on                    WiFi associated, link quality > 0
+net OFF (quality=0)        Associated but no signal — unusual, worth noting
+net OFF (quality=?)        Interface not found in /proc/net/wireless — disassociated
+... last-disc:reason=4    AP kicked for inactivity → uncomment the ping block
+... last-disc:reason=16G  TK rekey failure → different fix (see below)
+If you see reason=16, the fix isn't a ping — it's either upgrading the DD-WRT build or disabling GTK rekey with nvram set wl_wpa_gtk_rekey=0 && nvram commit.
 
 ## Termux (bash on Android)
 
