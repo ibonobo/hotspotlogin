@@ -308,20 +308,42 @@ recover_remaining() {
     echo "$_remaining"
 }
 
-# ── Timed sleep with hourly heartbeat ─────────────────────
+# ── Timed sleep with hourly heartbeat; added wifi check ─────────────────────
 
 sleep_seconds() {
     _rem=$1 _label=$2 _chunk=3600
+
     while [ "$_rem" -gt 0 ]; do
         [ "$_rem" -lt "$_chunk" ] && _chunk=$_rem
+
         sleep "$_chunk"
         _rem=$(( _rem - _chunk ))
+
         if [ "$_rem" -gt 0 ]; then
-            log "$_label — $(( _rem/3600 ))h$(( (_rem%3600)/60 ))m remaining..."
+            # ── hourly wifi check (passive — no ping) ──────────────
+            _wq=$(awk -v iface="$(get_wifi_iface):" \
+                '$1==iface {gsub(/\./,"",$3); print $3+0; exit}' \
+                /proc/net/wireless 2>/dev/null)
+            if [ "${_wq:-0}" -gt 0 ]; then
+                _net="net on"
+            else
+                _net="net OFF (quality=${_wq:-?})"
+            fi
+            # Last disconnect reason from kernel ring buffer — diagnostic only.
+            # Stays blank when no disconnect has occurred since last boot.
+            _disc=$(logread 2>/dev/null \
+                | grep 'CTRL-EVENT-DISCONNECTED' \
+                | tail -1 \
+                | grep -o 'reason=[0-9]*')
+            [ -n "$_disc" ] && _net="$_net last-disc:$_disc"
+            # Uncomment below after confirming disconnect reason — activates keep-alive:
+            # ping -c 1 -W 3 192.168.1.1 >/dev/null 2>&1 \
+            #     && _net="$_net (ping ok)" || _net="$_net (ping FAIL)"
+            # ──────────────────────────────────────────────────────
+            log "$_label — $(( _rem/3600 ))h$(( (_rem%3600)/60 ))m remaining... $_net"
         fi
     done
 }
-
 # ── Watch window: poll until portal appears, then re-login ─
 
 watch_loop() {
