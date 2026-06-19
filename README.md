@@ -125,7 +125,7 @@ It took a while, but it did work.
 [2026-04-30 08:56:54] Login successful.
 [2026-04-30 08:56:54] Session stable — sleeping 8h0m before watching...
 ```
-A better use of existing Entware infrastructure is to modify the script and call it via a starter script, more precisely, /opt/etc/init.d/s99uqlogin starting /opt/etc/uqlogent.sh ; this also adds timer recovery on reboot
+A better use of existing Entware infrastructure is to modify the script and call it via a starter script, more precisely, /opt/etc/init.d/S99uqlogin starting /opt/etc/uqlogent.sh ; this also adds timer recovery on reboot and other specific enhancements
 
 ## Termux (bash on Android)
 
