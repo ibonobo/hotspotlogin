@@ -26,7 +26,7 @@ PROBE_URL="http://captive.apple.com/hotspot-detect.html"
 PROBE_EXPECT="Success"
 
 # Session duration in seconds before entering the watch window (~8h).
-SESSION_DURATION=28830
+SESSION_DURATION=28800
 
 # Poll interval (seconds) in the watch window.
 POLL_INTERVAL=30
