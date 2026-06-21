@@ -336,9 +336,10 @@ sleep_seconds() {
                 | tail -1 \
                 | grep -o 'reason=[0-9]*')
             [ -n "$_disc" ] && _net="$_net last-disc:$_disc"
-            _gw=$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')
-            ping -c 1 -W 3 "$_gw" >/dev/null 2>&1 \
-                && _net="$_net gw ok" || _net="$_net gw FAIL"
+            curl -sk --max-time 5 -o /dev/null -w "%{http_code}" \
+                http://detectportal.firefox.com/success.txt 2>/dev/null \
+                | grep -q "^200$" \
+                && _net="$_net inet ok" || _net="$_net inet FAIL"
             # Uncomment below after confirming disconnect reason — activates keep-alive:
             # ping -c 1 -W 3 192.168.1.1 >/dev/null 2>&1 \
             #     && _net="$_net (ping ok)" || _net="$_net (ping FAIL)"
