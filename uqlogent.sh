@@ -62,7 +62,7 @@ clock_is_valid() {
     [ "$(now_epoch)" -gt "$MIN_VALID_EPOCH" ] 2>/dev/null
 }
 
-# ── WiFi association check ────────────────────────────────
+# ── WiFi interface detection ──────────────────────────────
 #
 # /proc/net/wireless lists ONLY kernel-known wireless interfaces —
 # no wired interfaces, no lo, no parsing ambiguity.
@@ -84,60 +84,75 @@ get_wifi_iface() {
     fi
 }
 
-# Returns 0 if the station interface is associated to an AP.
-# Reads link quality directly from /proc/net/wireless — no iwconfig needed.
-# The link quality field (3rd column) is 0 when unassociated, nonzero when linked.
-# Format: " wlan1: 0000   55.  -55.  -95.  ..."
-#                         ^^^— link quality (with trailing dot)
-wifi_associated() {
+# ── MAC randomization ─────────────────────────────────────
+# Randomizes the WAN wifi MAC before re-login to rotate identity.
+# Locally administered bit (02) set in first octet — avoids conflicts.
+# Requires interface down/up; wpa_supplicant reassociates automatically.
+# Accepts interface name as argument; falls back to get_wifi_iface.
+
+randomize_mac() {
+    _iface="${1:-$(get_wifi_iface)}"
+    [ -z "$_iface" ] && { log "randomize_mac: no interface found — skipping."; return 1; }
+    _mac=$(od -An -N5 -tx1 /dev/urandom 2>/dev/null \
+        | tr -d ' \n' \
+        | sed 's/\(..\)/\1:/g' \
+        | sed 's/:$//')
+    _mac="02:${_mac}"
+    log "Randomizing MAC on $_iface → $_mac"
+    ifconfig "$_iface" down
+    sleep 2
+    ifconfig "$_iface" hw ether "$_mac"
+    ifconfig "$_iface" up
+    sleep 5
+    log "MAC set. Waiting for re-association..."
+    _wait=0
+    while [ "$_wait" -lt 30 ]; do
+        _wq=$(awk -v iface="${_iface}:" \
+            '$1==iface {gsub(/\./,"",$3); print $3+0; exit}' \
+            /proc/net/wireless 2>/dev/null)
+        [ "${_wq:-0}" -gt 0 ] && { log "Re-associated after MAC change."; return 0; }
+        sleep 2
+        _wait=$(( _wait + 2 ))
+    done
+    log "WARNING: Not re-associated after MAC change — proceeding anyway."
+}
+
+# ── Unified connectivity check ────────────────────────────
+#
+# Probes internet state and wifi quality in one pass.
+# Stdout: "<state> wifi=<quality> disc=<reason|->"
+#   state:   free | portal | offline
+#   quality: link quality integer from /proc/net/wireless (0 = unassociated)
+#   disc:    last wpa disconnect reason from logread, or '-' if none
+#
+# Callers that need only the state:
+#   _state=$(check_connectivity | cut -d' ' -f1)
+# Callers that want the full string (heartbeat log):
+#   _status=$(check_connectivity)
+
+check_connectivity() {
+    # ── WiFi quality (layer 2) ───────────────────────────
     _iface=$(get_wifi_iface)
-    if [ -z "$_iface" ]; then
-        log "WARNING: No wireless interface in /proc/net/wireless — skipping association check."
-        return 0
+    _wq=0
+    if [ -n "$_iface" ]; then
+        _wq=$(awk -v iface="${_iface}:" \
+            '$1==iface {gsub(/\./,"",$3); print $3+0; exit}' \
+            /proc/net/wireless 2>/dev/null)
+        _wq="${_wq:-0}"
     fi
-    # Extract link quality for our interface; strip trailing dot; check > 0.
-    _link=$(awk -v iface="${_iface}:" '
-        $1 == iface {
-            gsub(/\./, "", $3)
-            print $3
-            exit
-        }
-    ' /proc/net/wireless 2>/dev/null)
 
-    # If the field is missing entirely, fall through as associated (safe default).
-    [ -z "$_link" ] && { log "WARNING: $_iface not found in /proc/net/wireless."; return 0; }
-    [ "$_link" -gt 0 ] 2>/dev/null
-}
+    # ── Last disconnect reason (diagnostic) ─────────────
+    _disc=$(logread 2>/dev/null \
+        | grep 'CTRL-EVENT-DISCONNECTED' \
+        | tail -1 \
+        | grep -o 'reason=[0-9]*')
+    _disc="${_disc:-}"
 
-# Block until the WiFi station is associated.
-wait_for_association() {
-    _iface=$(get_wifi_iface)
-    log "Waiting for WiFi association on ${_iface:-<auto>}..."
-    while ! wifi_associated; do
-        sleep "$ASSOC_POLL"
-    done
-    log "WiFi associated on ${_iface:-$(detect_wifi_iface)}."
-    # Wait for DHCP lease — inet addr must appear before the portal is reachable.
-    log "Waiting for DHCP lease on ${_iface}..."
-    while ! ifconfig "$_iface" 2>/dev/null | grep -q "inet addr"; do
-        sleep "$ASSOC_POLL"
-    done
-    log "DHCP lease obtained on ${_iface}."
-}
-
-# ── Connectivity probe ────────────────────────────────────
-#
-# Returns one of three strings on stdout:
-#   "free"    — internet unblocked (probe returned expected body)
-#   "portal"  — portal intercepts traffic, login needed (probe redirected)
-#   "offline" — no response at all (not associated / DHCP not settled)
-#
-# The Ubiquiti portal intercepts ALL HTTP traffic and redirects it (302)
-# before login — including captive.apple.com. After login, captive.apple.com
-# returns 200 with "Success" in the body. No response means offline.
-# A single probe URL therefore cleanly distinguishes all three states.
-
-probe_connectivity() {
+    # ── Internet state (layer 3/7) ───────────────────────
+    # Single probe URL distinguishes all three states:
+    #   200 + expected body → free
+    #   3xx redirect        → portal
+    #   no response / 000   → offline
     _tmpbody=$(mktemp /tmp/uqprobe.XXXXXX 2>/dev/null || echo "/tmp/uqprobe.tmp")
     _code=$(curl -s \
         -o "$_tmpbody" \
@@ -153,25 +168,25 @@ probe_connectivity() {
     case "$_code" in
         200)
             if echo "$_body" | grep -q "$PROBE_EXPECT"; then
-                echo "free"
+                _state="free"
             else
                 # 200 but wrong body — portal spoofing success page
-                echo "portal"
+                _state="portal"
             fi
             ;;
         301|302|303|307|308)
-            # Portal intercepted the request
-            echo "portal"
+            _state="portal"
             ;;
-        "")
-            # No response — not associated or DHCP not ready
-            echo "offline"
+        ''|000)
+            _state="offline"
             ;;
         *)
             # Any other code — treat as portal (something is in the way)
-            echo "portal"
+            _state="portal"
             ;;
     esac
+
+    echo "$_state wifi=${_wq} disc=${_disc:--}"
 }
 
 # ── Login ─────────────────────────────────────────────────
@@ -308,52 +323,33 @@ recover_remaining() {
     echo "$_remaining"
 }
 
-# ── Timed sleep with hourly heartbeat; added wifi check ─────────────────────
+# ── Timed sleep with hourly heartbeat ────────────────────
+# Calls check_connectivity at each tick for a combined status line.
+# Randomizes WAN wifi MAC when sleep completes (before re-login).
 
 sleep_seconds() {
     _rem=$1 _label=$2 _chunk=3600
 
     while [ "$_rem" -gt 0 ]; do
         [ "$_rem" -lt "$_chunk" ] && _chunk=$_rem
-
         sleep "$_chunk"
         _rem=$(( _rem - _chunk ))
-
         if [ "$_rem" -gt 0 ]; then
-            # ── hourly wifi check (passive — no ping) ──────────────
-            _wq=$(awk -v iface="$(get_wifi_iface):" \
-                '$1==iface {gsub(/\./,"",$3); print $3+0; exit}' \
-                /proc/net/wireless 2>/dev/null)
-            if [ "${_wq:-0}" -gt 0 ]; then
-                _net="net on"
-            else
-                _net="net OFF (quality=${_wq:-?})"
-            fi
-            # Last disconnect reason from kernel ring buffer — diagnostic only.
-            # Stays blank when no disconnect has occurred since last boot.
-            _disc=$(logread 2>/dev/null \
-                | grep 'CTRL-EVENT-DISCONNECTED' \
-                | tail -1 \
-                | grep -o 'reason=[0-9]*')
-            [ -n "$_disc" ] && _net="$_net last-disc:$_disc"
-            curl -sk --max-time 5 -o /dev/null -w "%{http_code}" \
-                http://detectportal.firefox.com/success.txt 2>/dev/null \
-                | grep -q "^200$" \
-                && _net="$_net inet ok" || _net="$_net inet FAIL"
-            # Uncomment below after confirming disconnect reason — activates keep-alive:
-            # ping -c 1 -W 3 192.168.1.1 >/dev/null 2>&1 \
-            #     && _net="$_net (ping ok)" || _net="$_net (ping FAIL)"
-            # ──────────────────────────────────────────────────────
-            log "$_label — $(( _rem/3600 ))h$(( (_rem%3600)/60 ))m remaining... $_net"
+            log "$_label — $(( _rem/3600 ))h$(( (_rem%3600)/60 ))m remaining... $(check_connectivity)"
         fi
     done
+
+    # Sleep elapsed — randomize MAC before re-login
+    randomize_mac "$(get_wifi_iface)"
 }
+
 # ── Watch window: poll until portal appears, then re-login ─
 
 watch_loop() {
     log "Entering watch window — polling every ${POLL_INTERVAL}s..."
     while true; do
-        _state=$(probe_connectivity)
+        _status=$(check_connectivity)
+        _state=$(echo "$_status" | cut -d' ' -f1)
         case "$_state" in
             free)
                 log "Still free — rechecking in ${POLL_INTERVAL}s..."
@@ -367,7 +363,7 @@ watch_loop() {
                 log "Login failed — retrying in ${POLL_INTERVAL}s..."
                 ;;
             offline)
-                log "Offline (WiFi dropped?) — rechecking in ${POLL_INTERVAL}s..."
+                log "Offline — rechecking in ${POLL_INTERVAL}s... $_status"
                 ;;
         esac
         sleep $POLL_INTERVAL
@@ -381,12 +377,27 @@ main() {
     mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null
 
     # Step 1: Wait for WiFi station to associate before doing anything.
+    wait_for_association() {
+        _iface=$(get_wifi_iface)
+        log "Waiting for WiFi association on ${_iface:-<auto>}..."
+        while [ "$(check_connectivity | cut -d' ' -f2 | cut -d= -f2)" -eq 0 ] 2>/dev/null; do
+            sleep "$ASSOC_POLL"
+        done
+        log "WiFi associated on ${_iface:-$(detect_wifi_iface)}."
+        # Wait for DHCP lease — inet addr must appear before the portal is reachable.
+        log "Waiting for DHCP lease on ${_iface}..."
+        while ! ifconfig "$_iface" 2>/dev/null | grep -q "inet addr"; do
+            sleep "$ASSOC_POLL"
+        done
+        log "DHCP lease obtained on ${_iface}."
+    }
     wait_for_association
 
     # Step 2: Probe connectivity — three possible startup states.
     log "Probing connectivity..."
-    _conn=$(probe_connectivity)
-    log "Connectivity: $_conn"
+    _status=$(check_connectivity)
+    _conn=$(echo "$_status" | cut -d' ' -f1)
+    log "Connectivity: $_status"
 
     case "$_conn" in
 
@@ -397,7 +408,6 @@ main() {
             if ! clock_is_valid; then
                 log "Internet up but clock invalid — waiting for NTP..."
                 wait_for_ntp
-                # wait_for_ntp may still fail; clock_is_valid guards recover_remaining
             fi
 
             if clock_is_valid; then
@@ -440,12 +450,13 @@ main() {
             while true; do
                 sleep "$ASSOC_POLL"
                 # Re-check association first
-                if ! wifi_associated; then
+                if [ "$(check_connectivity | cut -d' ' -f2 | cut -d= -f2)" -eq 0 ] 2>/dev/null; then
                     log "Lost association — waiting to re-associate..."
                     wait_for_association
                 fi
-                _conn=$(probe_connectivity)
-                log "Connectivity: $_conn"
+                _status=$(check_connectivity)
+                _conn=$(echo "$_status" | cut -d' ' -f1)
+                log "Connectivity: $_status"
                 [ "$_conn" != "offline" ] && break
             done
             # Re-enter main with the now-known state.
