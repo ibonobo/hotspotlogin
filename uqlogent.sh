@@ -43,6 +43,17 @@ MIN_VALID_EPOCH=1577836800
 # Seconds between WiFi association checks while waiting to associate.
 ASSOC_POLL=10
 
+# ── Local helpers (credentials, temperature) ─────────────
+# entemp.sh defines ROUTER_IP, ROUTER_USER, ROUTER_PASS and get_cpu_temp().
+# Not committed to git. chmod 600 /opt/etc/entemp.sh.
+
+_ENTEMP="$(dirname "$0")/entemp.sh"
+if [ -f "$_ENTEMP" ]; then
+    . "$_ENTEMP"
+else
+    get_cpu_temp() { echo "?C"; }
+fi
+
 # ─────────────────────────────────────────────────────────
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
@@ -120,10 +131,11 @@ randomize_mac() {
 # ── Unified connectivity check ────────────────────────────
 #
 # Probes internet state and wifi quality in one pass.
-# Stdout: "<state> wifi=<quality> disc=<reason|->"
+# Stdout: "<state> wifi=<quality> temp=<T> [disc=<reason>]"
 #   state:   free | portal | offline
 #   quality: link quality integer from /proc/net/wireless (0 = unassociated)
-#   disc:    last wpa disconnect reason from logread, or '-' if none
+#   temp:    CPU temperature from DD-WRT status page
+#   disc:    last wpa disconnect reason from logread — only shown when not free
 #
 # Callers that need only the state:
 #   _state=$(check_connectivity | cut -d' ' -f1)
@@ -140,13 +152,6 @@ check_connectivity() {
             /proc/net/wireless 2>/dev/null)
         _wq="${_wq:-0}"
     fi
-
-    # ── Last disconnect reason (diagnostic) ─────────────
-    _disc=$(logread 2>/dev/null \
-        | grep 'CTRL-EVENT-DISCONNECTED' \
-        | tail -1 \
-        | grep -o 'reason=[0-9]*')
-    _disc="${_disc:-}"
 
     # ── Internet state (layer 3/7) ───────────────────────
     # Single probe URL distinguishes all three states:
@@ -186,7 +191,19 @@ check_connectivity() {
             ;;
     esac
 
-    echo "$_state wifi=${_wq} disc=${_disc:--}"
+    # ── Last disconnect reason (diagnostic) ─────────────
+    # Only fetched and shown when state is not free — avoids
+    # showing stale reason codes on healthy heartbeat lines.
+    _disc=""
+    if [ "$_state" != "free" ]; then
+        _disc=$(logread 2>/dev/null \
+            | grep 'CTRL-EVENT-DISCONNECTED' \
+            | tail -1 \
+            | grep -o 'reason=[0-9]*')
+        [ -n "$_disc" ] && _disc=" disc=$_disc"
+    fi
+
+    echo "$_state wifi=${_wq} temp=$(get_cpu_temp)${_disc}"
 }
 
 # ── Login ─────────────────────────────────────────────────
@@ -243,7 +260,7 @@ do_login() {
     fi
 }
 
-# ── NTP wait ─────────────────────────────────────────────
+# ── NTP wait ──────────────────────────────────────────────
 # Blocks until the clock is valid or NTP_WAIT is exceeded.
 # Returns 0 if clock synced, 1 if timed out.
 
@@ -325,7 +342,8 @@ recover_remaining() {
 
 # ── Timed sleep with hourly heartbeat ────────────────────
 # Calls check_connectivity at each tick for a combined status line.
-# Randomizes WAN wifi MAC when sleep completes (before re-login).
+# Breaks out early if portal or offline detected mid-sleep.
+# MAC randomization is handled by the caller after natural expiry.
 
 sleep_seconds() {
     _rem=$1 _label=$2 _chunk=3600
@@ -335,12 +353,15 @@ sleep_seconds() {
         sleep "$_chunk"
         _rem=$(( _rem - _chunk ))
         if [ "$_rem" -gt 0 ]; then
-            log "$_label — $(( _rem/3600 ))h$(( (_rem%3600)/60 ))m remaining... $(check_connectivity)"
+            _status=$(check_connectivity)
+            _state=$(echo "$_status" | cut -d' ' -f1)
+            log "$_label — $(( _rem/3600 ))h$(( (_rem%3600)/60 ))m remaining... $_status"
+            if [ "$_state" = "portal" ] || [ "$_state" = "offline" ]; then
+                log "Connection lost mid-sleep — breaking out to re-login."
+                break
+            fi
         fi
     done
-
-    # Sleep elapsed — randomize MAC before re-login
-    randomize_mac "$(get_wifi_iface)"
 }
 
 # ── Watch window: poll until portal appears, then re-login ─
@@ -467,9 +488,14 @@ main() {
     esac
 
     # Steady-state loop after the first session (watch_loop returns on re-login).
+    # MAC is randomized only on natural session expiry, not on early break.
     while true; do
         log "Session sleep — $(( SESSION_DURATION/3600 ))h$(( (SESSION_DURATION%3600)/60 ))m..."
+        _iface=$(get_wifi_iface)
         sleep_seconds "$SESSION_DURATION" "Session sleep"
+        if [ "$(check_connectivity | cut -d' ' -f1)" = "free" ]; then
+            randomize_mac "$_iface"
+        fi
         watch_loop
     done
 }
