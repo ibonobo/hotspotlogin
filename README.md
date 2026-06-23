@@ -133,12 +133,18 @@ Upon discovering that the router disconnects in early morning (260619) I added a
 
 This was used in an older iteration of the log (06-19 or so) but was later discontinued.
 
-Line                      Meaning
-net on                    WiFi associated, link quality > 0
-net OFF (quality=0)        Associated but no signal — unusual, worth noting
-net OFF (quality=?)        Interface not found in /proc/net/wireless — disassociated
-... last-disc:reason=4    AP kicked for inactivity → uncomment the ping block
-... last-disc:reason=16G  TK rekey failure → different fix (see below)
+Line |                      Meaning
+
+net on |                    WiFi associated, link quality > 0
+
+net OFF (quality=0) |        Associated but no signal — unusual, worth noting
+
+net OFF (quality=?) |        Interface not found in /proc/net/wireless — disassociated
+
+... last-disc:reason=4 |    AP kicked for inactivity → uncomment the ping block
+
+... last-disc:reason=16G |  TK rekey failure → different fix (see below)
+
 If you see reason=16, the fix isn't a ping — it's either upgrading the DD-WRT build or disabling GTK rekey with nvram set wl_wpa_gtk_rekey=0 && nvram commit.
 
 ## Termux (bash on Android)
