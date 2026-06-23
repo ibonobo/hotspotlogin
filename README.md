@@ -90,9 +90,9 @@ Set-ExecutionPolicy RemoteSigned
 Start-Process powershell -ArgumentList "-WindowStyle Hidden -File C:\path\to\portal-login.ps1" -RedirectStandardOutput "$env:TEMP\portal_login.log"
 ```
 
-## DD-WRT — run uqlogin.sh at boot
+## DD-WRT with Entware — uqentlogin.sh and its companions
 
-The default distribution might not include curl. It can still be installed via Entware. If going that route, you have to first identify your router distribution (MIPS big endian in my test case) and get the install script for that. I found (early 2026) that wget kept timing out. I was only able to load http://bin.entware.net/mipssf-k3.4/ in an Edge browser; Firefox and Chromium on an older, 32bit linux laptop through the router timed out. Thus, setting up Entware on the USB stick ended up being manual and very time-consuming. The output of curl --version indicates some of its dependencies: 
+The default dd-wrt distribution might not include curl. It can still be installed via Entware. If going that route, you have to first identify your router distribution (MIPS big endian in my test case) and get the install script for that. I found (early 2026) that wget kept timing out when located in Europe. I was only able to load http://bin.entware.net/mipssf-k3.4/ in an Edge browser; Firefox and Chromium on an older, 32bit linux laptop through the router timed out. Thus, setting up Entware on the USB stick ended up being manual and very time-consuming. The output of curl --version indicates its dependencies: 
 
 ```bash
 curl 8.15.0 (mips-openwrt-linux-gnu) libcurl/8.15.0 OpenSSL/3.5.5 zlib/1.3.1 nghttp2/1.66.0                             
@@ -100,6 +100,7 @@ Release-Date: 2025-07-16
 Protocols: file ftp ftps http https imap imaps mqtt pop3 pop3s rtsp smtp smtps tftp                                     
 Features: alt-svc HSTS HTTP2 HTTPS-proxy IPv6 Largefile libz SSL threadsafe               
 ```
+In the router, one may use uqlogin.sh which remains universal, wherever curl can run, or go straight to the more advanced iterations.
 
 Go to Administration → Commands, paste this, and click Save Startup :
 
@@ -125,7 +126,7 @@ It took a while, but it did work.
 [2026-04-30 08:56:54] Login successful.
 [2026-04-30 08:56:54] Session stable — sleeping 8h0m before watching...
 ```
-A better use of existing Entware infrastructure is to modify the script and call it via a starter script, more precisely, /opt/etc/init.d/S99uqlogin starting /opt/etc/uqlogent.sh ; this also adds timer recovery on reboot and other specific enhancements. Use entemp.sh (also in /opt/etc/) only if your router shows temperature in the status page and you want this to appear in the /opt/var/logs/uqentlogin.log 
+A better use of existing Entware infrastructure is to modify the script and call it via a starter script, more precisely, /opt/etc/init.d/S99uqlogin starting /opt/etc/uqlogent.sh ; this also adds timer recovery on reboot and other specific enhancements (use entemp.sh - also in /opt/etc/ - only if your router shows temperature in the status page and you want this to appear in the /opt/var/logs/uqentlogin.log).
 Upon discovering that the router disconnects in early morning (260619) I added a check to the heartbeat, written to log.
 
 ### Reading the log output
