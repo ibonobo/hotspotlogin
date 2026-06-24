@@ -43,6 +43,20 @@ MIN_VALID_EPOCH=1577836800
 # Seconds between WiFi association checks while waiting to associate.
 ASSOC_POLL=10
 
+# ── Debug / safety flags ──────────────────────────────────
+
+# Set to 0 to suppress router reboot (watch_loop will log intent but not execute).
+# Useful when testing offline-recovery escalation without risking an unattended reboot.
+ALLOW_REBOOT=1
+
+# Set to 0 to skip MAC randomization entirely (interface stays up, no down/up cycle).
+# Useful when debugging connectivity issues to rule out the MAC change as a cause.
+RANDOMIZE_MAC=1
+
+# Set to 1 to log: the old MAC before change, the generated MAC being applied,
+# and the MAC actually confirmed on the interface via ifconfig after re-association.
+LOG_MAC=0
+
 # ── Local helpers (credentials, temperature) ─────────────
 # entemp.sh defines ROUTER_IP, ROUTER_USER, ROUTER_PASS and get_cpu_temp().
 # Not committed to git. chmod 600 /opt/etc/entemp.sh.
@@ -51,7 +65,7 @@ _ENTEMP="$(dirname "$0")/entemp.sh"
 if [ -f "$_ENTEMP" ]; then
     . "$_ENTEMP"
 else
-    get_cpu_temp() { echo "?C"; }
+    get_cpu_temp() { echo ""; }
 fi
 
 # ─────────────────────────────────────────────────────────
@@ -98,30 +112,86 @@ get_wifi_iface() {
 # ── MAC randomization ─────────────────────────────────────
 # Randomizes the WAN wifi MAC before re-login to rotate identity.
 # Locally administered bit (02) set in first octet — avoids conflicts.
-# Requires interface down/up; wpa_supplicant reassociates automatically.
+# Guarded by RANDOMIZE_MAC flag; skipped entirely when set to 0.
 # Accepts interface name as argument; falls back to get_wifi_iface.
+#
+# Generation strategy (BusyBox-safe):
+#   Primary:  dd → tmpfile → od -An -N5 -tx1 → awk field-split
+#             Avoids pipe-buffering race that causes od to see 0 bytes on
+#             some BusyBox builds, producing empty output → "02:" → ifconfig error.
+#   Fallback: awk srand(time^PID) — no external tools, always succeeds.
+#   Guard:    generated MAC validated against xx:xx:xx:xx:xx:xx before use;
+#             function aborts (interface left untouched) if format is wrong.
 
 randomize_mac() {
+    # Skip entirely if disabled
+    if [ "${RANDOMIZE_MAC:-1}" -eq 0 ]; then
+        log "MAC randomization disabled (RANDOMIZE_MAC=0) — skipping."
+        return 0
+    fi
+
     _iface="${1:-$(get_wifi_iface)}"
     [ -z "$_iface" ] && { log "randomize_mac: no interface found — skipping."; return 1; }
-    _mac=$(od -An -N5 -tx1 /dev/urandom 2>/dev/null \
-        | tr -d ' \n' \
-        | sed 's/\(..\)/\1:/g' \
-        | sed 's/:$//')
-    _mac="02:${_mac}"
-    log "Randomizing MAC on $_iface → $_mac"
+
+    # Log old MAC before any change
+    if [ "${LOG_MAC:-0}" -eq 1 ]; then
+        _old_mac=$(ifconfig "$_iface" 2>/dev/null \
+            | grep -o 'HWaddr [^ ]*' | awk '{print $2}')
+        [ -z "$_old_mac" ] && _old_mac=$(ifconfig "$_iface" 2>/dev/null \
+            | grep -o 'ether [^ ]*' | awk '{print $2}')
+        log "MAC before change on $_iface: ${_old_mac:-unknown}"
+    fi
+
+    # Generate 5 random octets — primary: tmpfile avoids pipe race on BusyBox od
+    _tmpf=$(mktemp /tmp/mac.XXXXXX 2>/dev/null || echo "/tmp/mac.$$")
+    dd if=/dev/urandom of="$_tmpf" bs=1 count=5 2>/dev/null
+    _octets=$(od -An -N5 -tx1 "$_tmpf" \
+        | awk '{for(i=1;i<=NF;i++) printf "%s%s",$i,(i<NF?":":""); exit}')
+    rm -f "$_tmpf"
+
+    # Fallback: awk srand seeded with epoch XOR PID — no od/dd needed
+    if [ -z "$_octets" ]; then
+        log "MAC generation: od/dd produced empty output — using awk fallback."
+        _seed=$(( $(date +%s) ^ $$ ))
+        _octets=$(awk -v s="$_seed" 'BEGIN{
+            srand(s)
+            for(i=1;i<=5;i++) printf "%02x%s",int(rand()*256),(i<5?":":"")
+        }')
+    fi
+
+    _mac="02:${_octets}"
+
+    # Validate format before touching the interface — xx:xx:xx:xx:xx:xx
+    if ! echo "$_mac" | grep -qE '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'; then
+        log "ERROR: generated MAC '$_mac' has invalid format — aborting MAC change."
+        return 1
+    fi
+
+    log "Randomizing MAC on $_iface: old=${_old_mac:-?} new=$_mac"
+
     ifconfig "$_iface" down
     sleep 2
     ifconfig "$_iface" hw ether "$_mac"
     ifconfig "$_iface" up
     sleep 5
-    log "MAC set. Waiting for re-association..."
+
+    log "MAC applied. Waiting for re-association..."
     _wait=0
     while [ "$_wait" -lt 30 ]; do
         _wq=$(awk -v iface="${_iface}:" \
             '$1==iface {gsub(/\./,"",$3); print $3+0; exit}' \
             /proc/net/wireless 2>/dev/null)
-        [ "${_wq:-0}" -gt 0 ] && { log "Re-associated after MAC change."; return 0; }
+        if [ "${_wq:-0}" -gt 0 ]; then
+            log "Re-associated after MAC change."
+            if [ "${LOG_MAC:-0}" -eq 1 ]; then
+                _active_mac=$(ifconfig "$_iface" 2>/dev/null \
+                    | grep -o 'HWaddr [^ ]*' | awk '{print $2}')
+                [ -z "$_active_mac" ] && _active_mac=$(ifconfig "$_iface" 2>/dev/null \
+                    | grep -o 'ether [^ ]*' | awk '{print $2}')
+                log "MAC confirmed on $_iface: ${_active_mac:-unknown}"
+            fi
+            return 0
+        fi
         sleep 2
         _wait=$(( _wait + 2 ))
     done
@@ -135,7 +205,7 @@ randomize_mac() {
 #   state:   free | portal | offline
 #   quality: link quality integer from /proc/net/wireless (0 = unassociated)
 #   temp:    CPU temperature from DD-WRT status page
-#   disc:    last wpa disconnect reason from logread — only shown when not free
+#   disc:    last wpa disconnect reason from logread — only shown when numeric
 #
 # Callers that need only the state:
 #   _state=$(check_connectivity | cut -d' ' -f1)
@@ -192,18 +262,21 @@ check_connectivity() {
     esac
 
     # ── Last disconnect reason (diagnostic) ─────────────
-    # Only fetched and shown when state is not free — avoids
-    # showing stale reason codes on healthy heartbeat lines.
+    # Only fetched when state is not free; only shown when a numeric reason code
+    # is present — suppresses both "no match" and non-numeric logread noise.
     _disc=""
     if [ "$_state" != "free" ]; then
-        _disc=$(logread 2>/dev/null \
+        _reason=$(logread 2>/dev/null \
             | grep 'CTRL-EVENT-DISCONNECTED' \
             | tail -1 \
-            | grep -o 'reason=[0-9]*')
-        [ -n "$_disc" ] && _disc=" disc=$_disc"
+            | grep -o 'reason=[0-9][0-9]*' \
+            | grep -o '[0-9][0-9]*')
+        [ -n "$_reason" ] && _disc=" disc=$_reason"
     fi
 
-    echo "$_state wifi=${_wq} temp=$(get_cpu_temp)${_disc}"
+    _temp=$(get_cpu_temp)
+    [ -n "$_temp" ] && _temp=" temp=${_temp}" || _temp=""
+    echo "$_state wifi=${_wq}${_temp}${_disc}"
 }
 
 # ── Login ─────────────────────────────────────────────────
@@ -364,19 +437,53 @@ sleep_seconds() {
     done
 }
 
+# ── WiFi interface bounce ─────────────────────────────────
+# Brings the WAN wifi interface down then up to force reassociation.
+# Used by watch_loop when stuck offline.
+
+bounce_wifi() {
+    _iface="${1:-$(get_wifi_iface)}"
+    [ -z "$_iface" ] && { log "bounce_wifi: no interface found — skipping."; return 1; }
+    log "Bouncing $_iface to recover from offline..."
+    ifconfig "$_iface" down
+    sleep 3
+    ifconfig "$_iface" up
+    sleep 10
+    log "Interface bounce done. Waiting for re-association..."
+    _wait=0
+    while [ "$_wait" -lt 30 ]; do
+        _wq=$(awk -v iface="${_iface}:" \
+            '$1==iface {gsub(/\./,"",$3); print $3+0; exit}' \
+            /proc/net/wireless 2>/dev/null)
+        [ "${_wq:-0}" -gt 0 ] && { log "Re-associated after bounce."; return 0; }
+        sleep 2
+        _wait=$(( _wait + 2 ))
+    done
+    log "WARNING: Not re-associated after bounce."
+    return 1
+}
+
 # ── Watch window: poll until portal appears, then re-login ─
+# Offline recovery escalation:
+#   5 consecutive offline polls (2.5 min) → bounce wifi interface
+#   5 more offline polls after bounce     → reboot router
 
 watch_loop() {
     log "Entering watch window — polling every ${POLL_INTERVAL}s..."
+    _offline_count=0
+    _bounced=0
+    _iface=$(get_wifi_iface)
     while true; do
         _status=$(check_connectivity)
         _state=$(echo "$_status" | cut -d' ' -f1)
         case "$_state" in
             free)
                 log "Still free — rechecking in ${POLL_INTERVAL}s..."
+                _offline_count=0
                 ;;
             portal)
                 log "Portal detected — logging in."
+                _offline_count=0
                 if do_login; then
                     wait_ntp_and_save_state
                     return 0
@@ -384,7 +491,20 @@ watch_loop() {
                 log "Login failed — retrying in ${POLL_INTERVAL}s..."
                 ;;
             offline)
-                log "Offline — rechecking in ${POLL_INTERVAL}s... $_status"
+                _offline_count=$(( _offline_count + 1 ))
+                log "Offline — rechecking in ${POLL_INTERVAL}s... $_status (x${_offline_count})"
+                if [ "$_bounced" -eq 0 ] && [ "$_offline_count" -ge 5 ]; then
+                    bounce_wifi "$_iface"
+                    _bounced=1
+                    _offline_count=0
+                elif [ "$_bounced" -eq 1 ] && [ "$_offline_count" -ge 5 ]; then
+                    if [ "${ALLOW_REBOOT:-1}" -eq 1 ]; then
+                        log "Still offline after interface bounce — rebooting router."
+                        reboot
+                    else
+                        log "Still offline after interface bounce — reboot suppressed (ALLOW_REBOOT=0)."
+                    fi
+                fi
                 ;;
         esac
         sleep $POLL_INTERVAL
