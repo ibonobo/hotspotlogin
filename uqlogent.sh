@@ -133,20 +133,19 @@ randomize_mac() {
     _iface="${1:-$(get_wifi_iface)}"
     [ -z "$_iface" ] && { log "randomize_mac: no interface found — skipping."; return 1; }
 
-    # Log old MAC before any change
+    # Log old MAC before any change — pattern grep is format-agnostic across
+    # all BusyBox ifconfig variants (HWaddr, HWAddr, ether on any line)
+    _old_mac=$(ifconfig "$_iface" 2>/dev/null \
+        | grep -oE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' | head -1)
     if [ "${LOG_MAC:-0}" -eq 1 ]; then
-        _old_mac=$(ifconfig "$_iface" 2>/dev/null \
-            | grep -o 'HWaddr [^ ]*' | awk '{print $2}')
-        [ -z "$_old_mac" ] && _old_mac=$(ifconfig "$_iface" 2>/dev/null \
-            | grep -o 'ether [^ ]*' | awk '{print $2}')
         log "MAC before change on $_iface: ${_old_mac:-unknown}"
     fi
 
     # Generate 5 random octets — primary: tmpfile avoids pipe race on BusyBox od
     _tmpf=$(mktemp /tmp/mac.XXXXXX 2>/dev/null || echo "/tmp/mac.$$")
     dd if=/dev/urandom of="$_tmpf" bs=1 count=5 2>/dev/null
-    _octets=$(od -An -N5 -tx1 "$_tmpf" \
-        | awk '{for(i=1;i<=NF;i++) printf "%s%s",$i,(i<NF?":":""); exit}')
+    _octets=$(od -N5 -tx1 "$_tmpf" \
+        | awk 'NR==1{for(i=2;i<=NF;i++) printf "%s%s",$i,(i<NF?":":""); exit}')
     rm -f "$_tmpf"
 
     # Fallback: awk srand seeded with epoch XOR PID — no od/dd needed
@@ -182,12 +181,22 @@ randomize_mac() {
             '$1==iface {gsub(/\./,"",$3); print $3+0; exit}' \
             /proc/net/wireless 2>/dev/null)
         if [ "${_wq:-0}" -gt 0 ]; then
-            log "Re-associated after MAC change."
+            log "Re-associated after MAC change. Requesting DHCP lease..."
+            udhcpc -i "$_iface" -n -q 2>/dev/null
+            # Wait for inet addr — new MAC needs a fresh lease before curl will work
+            _dw=0
+            while [ "$_dw" -lt 30 ]; do
+                ifconfig "$_iface" 2>/dev/null | grep -q "inet addr" && break
+                sleep 2; _dw=$(( _dw + 2 ))
+            done
+            if ifconfig "$_iface" 2>/dev/null | grep -q "inet addr"; then
+                log "DHCP lease obtained after MAC change."
+            else
+                log "WARNING: No DHCP lease after MAC change — connectivity probe may fail."
+            fi
             if [ "${LOG_MAC:-0}" -eq 1 ]; then
                 _active_mac=$(ifconfig "$_iface" 2>/dev/null \
-                    | grep -o 'HWaddr [^ ]*' | awk '{print $2}')
-                [ -z "$_active_mac" ] && _active_mac=$(ifconfig "$_iface" 2>/dev/null \
-                    | grep -o 'ether [^ ]*' | awk '{print $2}')
+                    | grep -oE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' | head -1)
                 log "MAC confirmed on $_iface: ${_active_mac:-unknown}"
             fi
             return 0
