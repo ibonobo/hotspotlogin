@@ -25,6 +25,11 @@ WIFI_IFACE=""
 PROBE_URL="http://captive.apple.com/hotspot-detect.html"
 PROBE_EXPECT="Success"
 
+# Fallback probe: tried only when the primary probe times out (code 000).
+# generate_204 returns HTTP 204 when internet is free — no body check needed.
+# Distinguishes a flaky primary CDN from genuine offline state.
+PROBE_FALLBACK="http://connectivitycheck.gstatic.com/generate_204"
+
 # Session duration in seconds before entering the watch window (~8h).
 SESSION_DURATION=28800
 
@@ -133,19 +138,20 @@ randomize_mac() {
     _iface="${1:-$(get_wifi_iface)}"
     [ -z "$_iface" ] && { log "randomize_mac: no interface found — skipping."; return 1; }
 
-    # Log old MAC before any change — pattern grep is format-agnostic across
-    # all BusyBox ifconfig variants (HWaddr, HWAddr, ether on any line)
-    _old_mac=$(ifconfig "$_iface" 2>/dev/null \
-        | grep -oE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' | head -1)
+    # Log old MAC before any change
     if [ "${LOG_MAC:-0}" -eq 1 ]; then
+        _old_mac=$(ifconfig "$_iface" 2>/dev/null \
+            | grep -o 'HWaddr [^ ]*' | awk '{print $2}')
+        [ -z "$_old_mac" ] && _old_mac=$(ifconfig "$_iface" 2>/dev/null \
+            | grep -o 'ether [^ ]*' | awk '{print $2}')
         log "MAC before change on $_iface: ${_old_mac:-unknown}"
     fi
 
     # Generate 5 random octets — primary: tmpfile avoids pipe race on BusyBox od
     _tmpf=$(mktemp /tmp/mac.XXXXXX 2>/dev/null || echo "/tmp/mac.$$")
     dd if=/dev/urandom of="$_tmpf" bs=1 count=5 2>/dev/null
-    _octets=$(od -N5 -tx1 "$_tmpf" \
-        | awk 'NR==1{for(i=2;i<=NF;i++) printf "%s%s",$i,(i<NF?":":""); exit}')
+    _octets=$(od -An -N5 -tx1 "$_tmpf" \
+        | awk '{for(i=1;i<=NF;i++) printf "%s%s",$i,(i<NF?":":""); exit}')
     rm -f "$_tmpf"
 
     # Fallback: awk srand seeded with epoch XOR PID — no od/dd needed
@@ -181,22 +187,12 @@ randomize_mac() {
             '$1==iface {gsub(/\./,"",$3); print $3+0; exit}' \
             /proc/net/wireless 2>/dev/null)
         if [ "${_wq:-0}" -gt 0 ]; then
-            log "Re-associated after MAC change. Requesting DHCP lease..."
-            udhcpc -i "$_iface" -n -q 2>/dev/null
-            # Wait for inet addr — new MAC needs a fresh lease before curl will work
-            _dw=0
-            while [ "$_dw" -lt 30 ]; do
-                ifconfig "$_iface" 2>/dev/null | grep -q "inet addr" && break
-                sleep 2; _dw=$(( _dw + 2 ))
-            done
-            if ifconfig "$_iface" 2>/dev/null | grep -q "inet addr"; then
-                log "DHCP lease obtained after MAC change."
-            else
-                log "WARNING: No DHCP lease after MAC change — connectivity probe may fail."
-            fi
+            log "Re-associated after MAC change."
             if [ "${LOG_MAC:-0}" -eq 1 ]; then
                 _active_mac=$(ifconfig "$_iface" 2>/dev/null \
-                    | grep -oE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' | head -1)
+                    | grep -o 'HWaddr [^ ]*' | awk '{print $2}')
+                [ -z "$_active_mac" ] && _active_mac=$(ifconfig "$_iface" 2>/dev/null \
+                    | grep -o 'ether [^ ]*' | awk '{print $2}')
                 log "MAC confirmed on $_iface: ${_active_mac:-unknown}"
             fi
             return 0
@@ -216,6 +212,19 @@ randomize_mac() {
 #   temp:    CPU temperature from DD-WRT status page
 #   disc:    last wpa disconnect reason from logread — only shown when numeric
 #
+# Single curl probe — returns http_code, writes body to $_tmpbody.
+# $_tmpbody must be set by the caller before invoking this.
+_run_probe() {
+    curl -s \
+        -o "$_tmpbody" \
+        -w '%{http_code}' \
+        --max-redirs 0 \
+        --connect-timeout 8 \
+        --max-time 12 \
+        "$1" \
+        --insecure 2>/dev/null
+}
+
 # Callers that need only the state:
 #   _state=$(check_connectivity | cut -d' ' -f1)
 # Callers that want the full string (heartbeat log):
@@ -233,19 +242,31 @@ check_connectivity() {
     fi
 
     # ── Internet state (layer 3/7) ───────────────────────
-    # Single probe URL distinguishes all three states:
+    # Single curl call distinguishes three states:
     #   200 + expected body → free
-    #   3xx redirect        → portal
-    #   no response / 000   → offline
+    #   204                 → free  (fallback probe)
+    #   3xx redirect        → portal (captive portal intercepting)
+    #   000 / empty         → offline (no route / timeout)
+    #
+    # Retry strategy: if the primary probe times out (000), retry it once
+    # after a short pause, then fall back to a secondary URL before declaring
+    # offline. This prevents transient CDN timeouts from looking like outages.
+
     _tmpbody=$(mktemp /tmp/uqprobe.XXXXXX 2>/dev/null || echo "/tmp/uqprobe.tmp")
-    _code=$(curl -s \
-        -o "$_tmpbody" \
-        -w '%{http_code}' \
-        --max-redirs 0 \
-        --connect-timeout 8 \
-        --max-time 12 \
-        "$PROBE_URL" \
-        --insecure 2>/dev/null)
+
+    _code=$(_run_probe "$PROBE_URL")
+
+    if [ "$_code" = "000" ] || [ -z "$_code" ]; then
+        # Primary timed out — retry once after a short pause
+        sleep 3
+        _code=$(_run_probe "$PROBE_URL")
+    fi
+
+    if [ "$_code" = "000" ] || [ -z "$_code" ]; then
+        # Still timing out — try fallback probe before declaring offline
+        _code=$(_run_probe "${PROBE_FALLBACK:-http://connectivitycheck.gstatic.com/generate_204}")
+    fi
+
     _body=$(cat "$_tmpbody" 2>/dev/null)
     rm -f "$_tmpbody"
 
@@ -254,9 +275,12 @@ check_connectivity() {
             if echo "$_body" | grep -q "$PROBE_EXPECT"; then
                 _state="free"
             else
-                # 200 but wrong body — portal spoofing success page
                 _state="portal"
             fi
+            ;;
+        204)
+            # generate_204 fallback — no body needed
+            _state="free"
             ;;
         301|302|303|307|308)
             _state="portal"
@@ -265,7 +289,6 @@ check_connectivity() {
             _state="offline"
             ;;
         *)
-            # Any other code — treat as portal (something is in the way)
             _state="portal"
             ;;
     esac
@@ -285,7 +308,10 @@ check_connectivity() {
 
     _temp=$(get_cpu_temp)
     [ -n "$_temp" ] && _temp=" temp=${_temp}" || _temp=""
-    echo "$_state wifi=${_wq}${_temp}${_disc}"
+    # Include http code in output only when offline — helps diagnose probe failures
+    _code_tag=""
+    [ "$_state" = "offline" ] && _code_tag=" http=${_code:-000}"
+    echo "$_state wifi=${_wq}${_temp}${_disc}${_code_tag}"
 }
 
 # ── Login ─────────────────────────────────────────────────
