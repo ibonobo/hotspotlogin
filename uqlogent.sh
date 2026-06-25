@@ -167,17 +167,38 @@ randomize_mac() {
     # /proc/net/wireless shows association but no L3 traffic flows at all.
     # nvram + reboot brings the interface up cleanly with the new MAC from the start.
     #
-    # Derive nvram key from interface name: wlan0/ath0 -> wl0_hwaddr, wlan1/ath1 -> wl1_hwaddr
-    _ifnum=$(echo "$_iface" | grep -o '[0-9]*$')
-    _nvkey="wl${_ifnum}_hwaddr"
-    log "Writing $_mac to nvram key $_nvkey..."
-    if nvram set "${_nvkey}=${_mac}" && nvram commit; then
+    # Discover which nvram key(s) hold the current MAC by searching nvram show output.
+    # This is build-agnostic: avoids hardcoding wl0_hwaddr vs wl1_hwaddr vs wl1_macaddr
+    # vs et0macaddr, all of which vary across DD-WRT versions and chipsets.
+    if [ -z "$_old_mac" ]; then
+        log "ERROR: cannot discover nvram key - old MAC unknown. Aborting."
+        return 1
+    fi
+    _nvkeys=$(nvram show 2>/dev/null \
+        | grep -i "=${_old_mac}" \
+        | cut -d= -f1)
+    if [ -z "$_nvkeys" ]; then
+        log "ERROR: MAC ${_old_mac} not found in nvram - cannot determine key. Aborting."
+        log "Run 'nvram show | grep -i $(echo "$_old_mac" | cut -d: -f1)' to investigate."
+        return 1
+    fi
+    log "Found nvram key(s) for current MAC: $(echo "$_nvkeys" | tr '\n' ' ')"
+    _commit_needed=0
+    for _k in $_nvkeys; do
+        if nvram set "${_k}=${_mac}"; then
+            log "nvram set ${_k}=${_mac}"
+            _commit_needed=1
+        else
+            log "WARNING: nvram set ${_k} failed."
+        fi
+    done
+    if [ "$_commit_needed" -eq 1 ] && nvram commit; then
         log "nvram committed. Saving session state before reboot..."
         save_state
         log "Rebooting to apply new MAC cleanly."
         reboot
     else
-        log "ERROR: nvram set/commit failed - MAC change aborted, interface untouched."
+        log "ERROR: nvram commit failed - MAC change aborted."
         return 1
     fi
 }
