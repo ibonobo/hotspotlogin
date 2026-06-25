@@ -162,42 +162,24 @@ randomize_mac() {
 
     log "Randomizing MAC on $_iface: old=${_old_mac:-unknown} new=$_mac"
 
-    ifconfig "$_iface" down
-    sleep 2
-    ifconfig "$_iface" hw ether "$_mac"
-    ifconfig "$_iface" up
-    sleep 5
-
-    log "MAC applied. Waiting for re-association..."
-    _wait=0
-    while [ "$_wait" -lt 30 ]; do
-        _wq=$(awk -v iface="${_iface}:" \
-            '$1==iface {gsub(/\./,"",$3); print $3+0; exit}' \
-            /proc/net/wireless 2>/dev/null)
-        if [ "${_wq:-0}" -gt 0 ]; then
-            log "Re-associated after MAC change. Requesting DHCP lease..."
-            udhcpc -i "$_iface" -n -q 2>/dev/null
-            _dw=0
-            while [ "$_dw" -lt 30 ]; do
-                ifconfig "$_iface" 2>/dev/null | grep -q "inet addr" && break
-                sleep 2; _dw=$(( _dw + 2 ))
-            done
-            if ifconfig "$_iface" 2>/dev/null | grep -q "inet addr"; then
-                log "DHCP lease obtained after MAC change."
-            else
-                log "WARNING: No DHCP lease after MAC change - connectivity probe may fail."
-            fi
-            if [ "${LOG_MAC:-1}" -eq 1 ]; then
-                _active_mac=$(ifconfig "$_iface" 2>/dev/null \
-                    | grep -oE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' | head -1)
-                log "MAC confirmed on $_iface: ${_active_mac:-unknown}"
-            fi
-            return 0
-        fi
-        sleep 2
-        _wait=$(( _wait + 2 ))
-    done
-    log "WARNING: Not re-associated after MAC change - proceeding anyway."
+    # Write new MAC to nvram so DD-WRT applies it at driver init on next boot.
+    # ifconfig hw ether leaves the ath9k/ath10k driver in a broken half-state:
+    # /proc/net/wireless shows association but no L3 traffic flows at all.
+    # nvram + reboot brings the interface up cleanly with the new MAC from the start.
+    #
+    # Derive nvram key from interface name: wlan0/ath0 -> wl0_hwaddr, wlan1/ath1 -> wl1_hwaddr
+    _ifnum=$(echo "$_iface" | grep -o '[0-9]*$')
+    _nvkey="wl${_ifnum}_hwaddr"
+    log "Writing $_mac to nvram key $_nvkey..."
+    if nvram set "${_nvkey}=${_mac}" && nvram commit; then
+        log "nvram committed. Saving session state before reboot..."
+        save_state
+        log "Rebooting to apply new MAC cleanly."
+        reboot
+    else
+        log "ERROR: nvram set/commit failed - MAC change aborted, interface untouched."
+        return 1
+    fi
 }
 
 # ── Unified connectivity check ────────────────────────────
@@ -673,7 +655,8 @@ case "${1:-}" in
         _iface=$(get_wifi_iface)
         log "-macchange: pre-change state=$(check_connectivity)"
         randomize_mac "$_iface"
-        log "-macchange: post-change state=$(check_connectivity)"
+        # randomize_mac reboots on success; only reaches here if nvram failed
+        log "-macchange: randomize_mac returned without rebooting (nvram error?)"
         ;;
     "")
         main
