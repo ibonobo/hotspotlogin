@@ -120,13 +120,13 @@ get_wifi_iface() {
 # Guarded by RANDOMIZE_MAC flag; skipped entirely when set to 0.
 # Accepts interface name as argument; falls back to get_wifi_iface.
 #
-# Generation strategy (BusyBox-safe):
-#   Primary:  dd → tmpfile → od -An -N5 -tx1 → awk field-split
-#             Avoids pipe-buffering race that causes od to see 0 bytes on
-#             some BusyBox builds, producing empty output → "02:" → ifconfig error.
-#   Fallback: awk srand(time^PID) - no external tools, always succeeds.
-#   Guard:    generated MAC validated against xx:xx:xx:xx:xx:xx before use;
-#             function aborts (interface left untouched) if format is wrong.
+# Generation: pure awk srand() seeded with epoch XOR PID.
+# od/dd were attempted but this BusyBox od supports none of -A/-N/-t,
+# making it useless for byte-level hex output. awk is available everywhere,
+# needs no temp files or pipes, and produces valid MACs reliably.
+# Entropy is sufficient for MAC rotation (not a cryptographic use case).
+# Guard: generated MAC validated against xx:xx:xx:xx:xx:xx before use;
+# function aborts (interface left untouched) if format is wrong.
 
 randomize_mac() {
     # Skip entirely if disabled
@@ -144,23 +144,13 @@ randomize_mac() {
         | grep -oE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' | head -1)
     [ "${LOG_MAC:-1}" -eq 1 ] && log "MAC before change on $_iface: ${_old_mac:-unknown}"
 
-    # Generate 5 random octets - primary: tmpfile avoids pipe race on BusyBox od
-    # Plain 'od -N5 -tx1' without -A: address prefix appears as field 1, awk skips it
-    _tmpf=$(mktemp /tmp/mac.XXXXXX 2>/dev/null || echo "/tmp/mac.$$")
-    dd if=/dev/urandom of="$_tmpf" bs=1 count=5 2>/dev/null
-    _octets=$(od -N5 -tx1 "$_tmpf" \
-        | awk 'NR==1{for(i=2;i<=NF;i++) printf "%s%s",$i,(i<NF?":":""); exit}')
-    rm -f "$_tmpf"
-
-    # Fallback: awk srand seeded with epoch XOR PID - no od/dd needed
-    if [ -z "$_octets" ]; then
-        log "MAC generation: od/dd produced empty output - using awk fallback."
-        _seed=$(( $(date +%s) ^ $$ ))
-        _octets=$(awk -v s="$_seed" 'BEGIN{
-            srand(s)
-            for(i=1;i<=5;i++) printf "%02x%s",int(rand()*256),(i<5?":":"")
-        }')
-    fi
+    # Generate 5 random octets via awk - seed combines epoch and PID so two
+    # invocations in the same second (e.g. rapid testing) still differ
+    _seed=$(( $(date +%s) ^ $$ ))
+    _octets=$(awk -v s="$_seed" 'BEGIN{
+        srand(s)
+        for(i=1;i<=5;i++) printf "%02x%s",int(rand()*256),(i<5?":":"")
+    }')
 
     _mac="02:${_octets}"
 
@@ -314,7 +304,10 @@ check_connectivity() {
     fi
 
     _temp=$(get_cpu_temp)
-    [ -n "$_temp" ] && _temp=" temp=${_temp}" || _temp=""
+    # Guard against entemp.sh returning "46.0C" and us then appending another C.
+    # Strip one trailing C if present so we always append exactly one.
+    _temp=$(echo "$_temp" | sed 's/C$//')
+    [ -n "$_temp" ] && _temp=" temp=${_temp}C" || _temp=""
     # Include http code in output only when offline - helps diagnose probe failures
     _code_tag=""
     [ "$_state" = "offline" ] && _code_tag=" http=${_code:-000}"
