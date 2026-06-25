@@ -1,9 +1,9 @@
 #!/bin/sh
 # licensed GNU at github.com/ibonobo/hotspotlogin
-# /opt/etc/uqlogent.sh — Ubiquiti captive portal login daemon
+# /opt/etc/uqlogent.sh - Ubiquiti captive portal login daemon
 # Entware/DD-WRT specific. Managed by /opt/etc/init.d/S99uqlogin (Entware rc.unslung)
 #
-# Boot sequence on DD-WRT (no RTC — clock starts at 1970):
+# Boot sequence on DD-WRT (no RTC - clock starts at 1970):
 #   1. Wait for WiFi station association
 #   2. Probe connectivity: free internet / captive portal / offline
 #   3a. Free internet → check persisted state, recover remaining sleep
@@ -16,7 +16,7 @@ PORTAL_TRIGGER="http://192.168.1.1:8882"
 PORTAL_HOST="192.168.1.1:8880"
 LOGIN_URL="http://$PORTAL_HOST/guest/s/default/login"
 
-# Wireless client (station) interface — the one associated to the hotspot AP.
+# Wireless client (station) interface - the one associated to the hotspot AP.
 # Common values: ath0 (Archer C7 / WR1043ND), eth1, wlan0.
 # Set explicitly or leave blank for auto-detect.
 WIFI_IFACE=""
@@ -26,7 +26,7 @@ PROBE_URL="http://captive.apple.com/hotspot-detect.html"
 PROBE_EXPECT="Success"
 
 # Fallback probe: tried only when the primary probe times out (code 000).
-# generate_204 returns HTTP 204 when internet is free — no body check needed.
+# generate_204 returns HTTP 204 when internet is free - no body check needed.
 # Distinguishes a flaky primary CDN from genuine offline state.
 PROBE_FALLBACK="http://connectivitycheck.gstatic.com/generate_204"
 
@@ -36,13 +36,13 @@ SESSION_DURATION=28800
 # Poll interval (seconds) in the watch window.
 POLL_INTERVAL=30
 
-# State file — on USB /opt, survives reboots.
+# State file - on USB /opt, survives reboots.
 STATE_FILE="/opt/tmp/uqlogin_state"
 
 # Max seconds to wait for NTP to correct the clock after login.
 NTP_WAIT=120
 
-# Minimum plausible epoch (2020-01-01 UTC) — anything below = clock still 1970.
+# Minimum plausible epoch (2020-01-01 UTC) - anything below = clock still 1970.
 MIN_VALID_EPOCH=1577836800
 
 # Seconds between WiFi association checks while waiting to associate.
@@ -60,7 +60,7 @@ RANDOMIZE_MAC=1
 
 # Set to 1 to log: the old MAC before change, the generated MAC being applied,
 # and the MAC actually confirmed on the interface via ifconfig after re-association.
-LOG_MAC=0
+LOG_MAC=1
 
 # ── Local helpers (credentials, temperature) ─────────────
 # entemp.sh defines ROUTER_IP, ROUTER_USER, ROUTER_PASS and get_cpu_temp().
@@ -94,7 +94,7 @@ clock_is_valid() {
 
 # ── WiFi interface detection ──────────────────────────────
 #
-# /proc/net/wireless lists ONLY kernel-known wireless interfaces —
+# /proc/net/wireless lists ONLY kernel-known wireless interfaces -
 # no wired interfaces, no lo, no parsing ambiguity.
 # Format (after 2 header lines):
 #   ath0: 0000   70.  -40.  -95.   0   0   0   0   0   0
@@ -116,7 +116,7 @@ get_wifi_iface() {
 
 # ── MAC randomization ─────────────────────────────────────
 # Randomizes the WAN wifi MAC before re-login to rotate identity.
-# Locally administered bit (02) set in first octet — avoids conflicts.
+# Locally administered bit (02) set in first octet - avoids conflicts.
 # Guarded by RANDOMIZE_MAC flag; skipped entirely when set to 0.
 # Accepts interface name as argument; falls back to get_wifi_iface.
 #
@@ -124,39 +124,37 @@ get_wifi_iface() {
 #   Primary:  dd → tmpfile → od -An -N5 -tx1 → awk field-split
 #             Avoids pipe-buffering race that causes od to see 0 bytes on
 #             some BusyBox builds, producing empty output → "02:" → ifconfig error.
-#   Fallback: awk srand(time^PID) — no external tools, always succeeds.
+#   Fallback: awk srand(time^PID) - no external tools, always succeeds.
 #   Guard:    generated MAC validated against xx:xx:xx:xx:xx:xx before use;
 #             function aborts (interface left untouched) if format is wrong.
 
 randomize_mac() {
     # Skip entirely if disabled
     if [ "${RANDOMIZE_MAC:-1}" -eq 0 ]; then
-        log "MAC randomization disabled (RANDOMIZE_MAC=0) — skipping."
+        log "MAC randomization disabled (RANDOMIZE_MAC=0) - skipping."
         return 0
     fi
 
     _iface="${1:-$(get_wifi_iface)}"
-    [ -z "$_iface" ] && { log "randomize_mac: no interface found — skipping."; return 1; }
+    [ -z "$_iface" ] && { log "randomize_mac: no interface found - skipping."; return 1; }
 
-    # Log old MAC before any change
-    if [ "${LOG_MAC:-0}" -eq 1 ]; then
-        _old_mac=$(ifconfig "$_iface" 2>/dev/null \
-            | grep -o 'HWaddr [^ ]*' | awk '{print $2}')
-        [ -z "$_old_mac" ] && _old_mac=$(ifconfig "$_iface" 2>/dev/null \
-            | grep -o 'ether [^ ]*' | awk '{print $2}')
-        log "MAC before change on $_iface: ${_old_mac:-unknown}"
-    fi
+    # Read old MAC before any change - format-agnostic pattern works across all
+    # BusyBox ifconfig variants (HWaddr, HWAddr, ether on any line position)
+    _old_mac=$(ifconfig "$_iface" 2>/dev/null \
+        | grep -oE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' | head -1)
+    [ "${LOG_MAC:-1}" -eq 1 ] && log "MAC before change on $_iface: ${_old_mac:-unknown}"
 
-    # Generate 5 random octets — primary: tmpfile avoids pipe race on BusyBox od
+    # Generate 5 random octets - primary: tmpfile avoids pipe race on BusyBox od
+    # Plain 'od -N5 -tx1' without -A: address prefix appears as field 1, awk skips it
     _tmpf=$(mktemp /tmp/mac.XXXXXX 2>/dev/null || echo "/tmp/mac.$$")
     dd if=/dev/urandom of="$_tmpf" bs=1 count=5 2>/dev/null
-    _octets=$(od -An -N5 -tx1 "$_tmpf" \
-        | awk '{for(i=1;i<=NF;i++) printf "%s%s",$i,(i<NF?":":""); exit}')
+    _octets=$(od -N5 -tx1 "$_tmpf" \
+        | awk 'NR==1{for(i=2;i<=NF;i++) printf "%s%s",$i,(i<NF?":":""); exit}')
     rm -f "$_tmpf"
 
-    # Fallback: awk srand seeded with epoch XOR PID — no od/dd needed
+    # Fallback: awk srand seeded with epoch XOR PID - no od/dd needed
     if [ -z "$_octets" ]; then
-        log "MAC generation: od/dd produced empty output — using awk fallback."
+        log "MAC generation: od/dd produced empty output - using awk fallback."
         _seed=$(( $(date +%s) ^ $$ ))
         _octets=$(awk -v s="$_seed" 'BEGIN{
             srand(s)
@@ -166,13 +164,13 @@ randomize_mac() {
 
     _mac="02:${_octets}"
 
-    # Validate format before touching the interface — xx:xx:xx:xx:xx:xx
+    # Validate format before touching the interface - xx:xx:xx:xx:xx:xx
     if ! echo "$_mac" | grep -qE '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'; then
-        log "ERROR: generated MAC '$_mac' has invalid format — aborting MAC change."
+        log "ERROR: generated MAC '$_mac' has invalid format - aborting MAC change."
         return 1
     fi
 
-    log "Randomizing MAC on $_iface: old=${_old_mac:-?} new=$_mac"
+    log "Randomizing MAC on $_iface: old=${_old_mac:-unknown} new=$_mac"
 
     ifconfig "$_iface" down
     sleep 2
@@ -187,12 +185,21 @@ randomize_mac() {
             '$1==iface {gsub(/\./,"",$3); print $3+0; exit}' \
             /proc/net/wireless 2>/dev/null)
         if [ "${_wq:-0}" -gt 0 ]; then
-            log "Re-associated after MAC change."
-            if [ "${LOG_MAC:-0}" -eq 1 ]; then
+            log "Re-associated after MAC change. Requesting DHCP lease..."
+            udhcpc -i "$_iface" -n -q 2>/dev/null
+            _dw=0
+            while [ "$_dw" -lt 30 ]; do
+                ifconfig "$_iface" 2>/dev/null | grep -q "inet addr" && break
+                sleep 2; _dw=$(( _dw + 2 ))
+            done
+            if ifconfig "$_iface" 2>/dev/null | grep -q "inet addr"; then
+                log "DHCP lease obtained after MAC change."
+            else
+                log "WARNING: No DHCP lease after MAC change - connectivity probe may fail."
+            fi
+            if [ "${LOG_MAC:-1}" -eq 1 ]; then
                 _active_mac=$(ifconfig "$_iface" 2>/dev/null \
-                    | grep -o 'HWaddr [^ ]*' | awk '{print $2}')
-                [ -z "$_active_mac" ] && _active_mac=$(ifconfig "$_iface" 2>/dev/null \
-                    | grep -o 'ether [^ ]*' | awk '{print $2}')
+                    | grep -oE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' | head -1)
                 log "MAC confirmed on $_iface: ${_active_mac:-unknown}"
             fi
             return 0
@@ -200,7 +207,7 @@ randomize_mac() {
         sleep 2
         _wait=$(( _wait + 2 ))
     done
-    log "WARNING: Not re-associated after MAC change — proceeding anyway."
+    log "WARNING: Not re-associated after MAC change - proceeding anyway."
 }
 
 # ── Unified connectivity check ────────────────────────────
@@ -210,9 +217,9 @@ randomize_mac() {
 #   state:   free | portal | offline
 #   quality: link quality integer from /proc/net/wireless (0 = unassociated)
 #   temp:    CPU temperature from DD-WRT status page
-#   disc:    last wpa disconnect reason from logread — only shown when numeric
+#   disc:    last wpa disconnect reason from logread - only shown when numeric
 #
-# Single curl probe — returns http_code, writes body to $_tmpbody.
+# Single curl probe - returns http_code, writes body to $_tmpbody.
 # $_tmpbody must be set by the caller before invoking this.
 _run_probe() {
     curl -s \
@@ -257,13 +264,13 @@ check_connectivity() {
     _code=$(_run_probe "$PROBE_URL")
 
     if [ "$_code" = "000" ] || [ -z "$_code" ]; then
-        # Primary timed out — retry once after a short pause
+        # Primary timed out - retry once after a short pause
         sleep 3
         _code=$(_run_probe "$PROBE_URL")
     fi
 
     if [ "$_code" = "000" ] || [ -z "$_code" ]; then
-        # Still timing out — try fallback probe before declaring offline
+        # Still timing out - try fallback probe before declaring offline
         _code=$(_run_probe "${PROBE_FALLBACK:-http://connectivitycheck.gstatic.com/generate_204}")
     fi
 
@@ -279,7 +286,7 @@ check_connectivity() {
             fi
             ;;
         204)
-            # generate_204 fallback — no body needed
+            # generate_204 fallback - no body needed
             _state="free"
             ;;
         301|302|303|307|308)
@@ -295,7 +302,7 @@ check_connectivity() {
 
     # ── Last disconnect reason (diagnostic) ─────────────
     # Only fetched when state is not free; only shown when a numeric reason code
-    # is present — suppresses both "no match" and non-numeric logread noise.
+    # is present - suppresses both "no match" and non-numeric logread noise.
     _disc=""
     if [ "$_state" != "free" ]; then
         _reason=$(logread 2>/dev/null \
@@ -308,7 +315,7 @@ check_connectivity() {
 
     _temp=$(get_cpu_temp)
     [ -n "$_temp" ] && _temp=" temp=${_temp}" || _temp=""
-    # Include http code in output only when offline — helps diagnose probe failures
+    # Include http code in output only when offline - helps diagnose probe failures
     _code_tag=""
     [ "$_state" = "offline" ] && _code_tag=" http=${_code:-000}"
     echo "$_state wifi=${_wq}${_temp}${_disc}${_code_tag}"
@@ -319,7 +326,7 @@ check_connectivity() {
 do_login() {
     log "Starting login flow..."
 
-    # Step 1: Hit port 8882 — extract the redirect Location header.
+    # Step 1: Hit port 8882 - extract the redirect Location header.
     # The session token 'ec' is a query parameter in the redirect URL,
     # not an HTTP cookie. Example:
     # Location: http://192.168.1.1:8880/guest/s/default/?ap=xx:xx&ec=XXXX
@@ -333,7 +340,7 @@ do_login() {
     log "Redirect location: $LOCATION"
 
     if [ -z "$LOCATION" ]; then
-        log "Login failed — no redirect from portal trigger."
+        log "Login failed - no redirect from portal trigger."
         return 1
     fi
 
@@ -341,7 +348,7 @@ do_login() {
     EC=$(echo "$LOCATION" | sed 's/.*[?&]ec=\([^&]*\).*/\1/')
 
     if [ -z "$EC" ] || [ "$EC" = "$LOCATION" ]; then
-        log "Login failed — could not extract 'ec' from: $LOCATION"
+        log "Login failed - could not extract 'ec' from: $LOCATION"
         return 1
     fi
     log "Extracted ec token (${#EC} chars)."
@@ -383,7 +390,7 @@ wait_for_ntp() {
             return 0
         fi
     done
-    log "WARNING: Clock still at 1970 after ${NTP_WAIT}s — NTP failed?"
+    log "WARNING: Clock still at 1970 after ${NTP_WAIT}s - NTP failed?"
     return 1
 }
 
@@ -396,12 +403,12 @@ save_state() {
     if echo "$_epoch" > "$STATE_FILE" 2>/dev/null; then
         log "State saved: epoch $_epoch."
     else
-        log "WARNING: Cannot write $STATE_FILE — check /opt/tmp exists and is writable."
+        log "WARNING: Cannot write $STATE_FILE - check /opt/tmp exists and is writable."
     fi
 }
 
 # ── NTP wait + state save ─────────────────────────────────
-# Convenience wrapper — called after a successful login.
+# Convenience wrapper - called after a successful login.
 
 wait_ntp_and_save_state() {
     if wait_for_ntp; then
@@ -414,17 +421,17 @@ wait_ntp_and_save_state() {
 # Outputs remaining seconds if recovery is possible, nothing otherwise.
 
 recover_remaining() {
-    [ -f "$STATE_FILE" ] || { log "No state file — starting fresh session." >&2; return 1; }
+    [ -f "$STATE_FILE" ] || { log "No state file - starting fresh session." >&2; return 1; }
 
     _saved=$(cat "$STATE_FILE" 2>/dev/null)
     case "$_saved" in
         ''|*[!0-9]*)
-            log "State file corrupt — removing." >&2
+            log "State file corrupt - removing." >&2
             rm -f "$STATE_FILE"; return 1 ;;
     esac
 
     if [ "$_saved" -lt "$MIN_VALID_EPOCH" ] 2>/dev/null; then
-        log "State file has pre-2020 timestamp — removing." >&2
+        log "State file has pre-2020 timestamp - removing." >&2
         rm -f "$STATE_FILE"; return 1
     fi
 
@@ -432,19 +439,19 @@ recover_remaining() {
     _elapsed=$(( _now - _saved ))
 
     if [ "$_elapsed" -lt 0 ]; then
-        log "State timestamp is in the future (clock skew?) — ignoring." >&2
+        log "State timestamp is in the future (clock skew?) - ignoring." >&2
         return 1
     fi
 
     if [ "$_elapsed" -ge "$SESSION_DURATION" ]; then
-        log "State: session window already elapsed (${_elapsed}s since login) — no recovery." >&2
+        log "State: session window already elapsed (${_elapsed}s since login) - no recovery." >&2
         return 1
     fi
 
     _remaining=$(( SESSION_DURATION - _elapsed ))
     _hrs=$(( _remaining / 3600 ))
     _mins=$(( (_remaining % 3600) / 60 ))
-    log "State: rebooted ${_elapsed}s into session — recovering ${_hrs}h${_mins}m of sleep." >&2
+    log "State: rebooted ${_elapsed}s into session - recovering ${_hrs}h${_mins}m of sleep." >&2
     echo "$_remaining"
 }
 
@@ -463,9 +470,9 @@ sleep_seconds() {
         if [ "$_rem" -gt 0 ]; then
             _status=$(check_connectivity)
             _state=$(echo "$_status" | cut -d' ' -f1)
-            log "$_label — $(( _rem/3600 ))h$(( (_rem%3600)/60 ))m remaining... $_status"
+            log "$_label - $(( _rem/3600 ))h$(( (_rem%3600)/60 ))m remaining... $_status"
             if [ "$_state" = "portal" ] || [ "$_state" = "offline" ]; then
-                log "Connection lost mid-sleep — breaking out to re-login."
+                log "Connection lost mid-sleep - breaking out to re-login."
                 break
             fi
         fi
@@ -478,7 +485,7 @@ sleep_seconds() {
 
 bounce_wifi() {
     _iface="${1:-$(get_wifi_iface)}"
-    [ -z "$_iface" ] && { log "bounce_wifi: no interface found — skipping."; return 1; }
+    [ -z "$_iface" ] && { log "bounce_wifi: no interface found - skipping."; return 1; }
     log "Bouncing $_iface to recover from offline..."
     ifconfig "$_iface" down
     sleep 3
@@ -504,7 +511,7 @@ bounce_wifi() {
 #   5 more offline polls after bounce     → reboot router
 
 watch_loop() {
-    log "Entering watch window — polling every ${POLL_INTERVAL}s..."
+    log "Entering watch window - polling every ${POLL_INTERVAL}s..."
     _offline_count=0
     _bounced=0
     _iface=$(get_wifi_iface)
@@ -513,31 +520,31 @@ watch_loop() {
         _state=$(echo "$_status" | cut -d' ' -f1)
         case "$_state" in
             free)
-                log "Still free — rechecking in ${POLL_INTERVAL}s..."
+                log "Still free - rechecking in ${POLL_INTERVAL}s..."
                 _offline_count=0
                 ;;
             portal)
-                log "Portal detected — logging in."
+                log "Portal detected - logging in."
                 _offline_count=0
                 if do_login; then
                     wait_ntp_and_save_state
                     return 0
                 fi
-                log "Login failed — retrying in ${POLL_INTERVAL}s..."
+                log "Login failed - retrying in ${POLL_INTERVAL}s..."
                 ;;
             offline)
                 _offline_count=$(( _offline_count + 1 ))
-                log "Offline — rechecking in ${POLL_INTERVAL}s... $_status (x${_offline_count})"
+                log "Offline - rechecking in ${POLL_INTERVAL}s... $_status (x${_offline_count})"
                 if [ "$_bounced" -eq 0 ] && [ "$_offline_count" -ge 5 ]; then
                     bounce_wifi "$_iface"
                     _bounced=1
                     _offline_count=0
                 elif [ "$_bounced" -eq 1 ] && [ "$_offline_count" -ge 5 ]; then
                     if [ "${ALLOW_REBOOT:-1}" -eq 1 ]; then
-                        log "Still offline after interface bounce — rebooting router."
+                        log "Still offline after interface bounce - rebooting router."
                         reboot
                     else
-                        log "Still offline after interface bounce — reboot suppressed (ALLOW_REBOOT=0)."
+                        log "Still offline after interface bounce - reboot suppressed (ALLOW_REBOOT=0)."
                     fi
                 fi
                 ;;
@@ -559,8 +566,8 @@ main() {
         while [ "$(check_connectivity | cut -d' ' -f2 | cut -d= -f2)" -eq 0 ] 2>/dev/null; do
             sleep "$ASSOC_POLL"
         done
-        log "WiFi associated on ${_iface:-$(detect_wifi_iface)}."
-        # Wait for DHCP lease — inet addr must appear before the portal is reachable.
+        log "WiFi associated on ${_iface:-$(get_wifi_iface)}."
+        # Wait for DHCP lease - inet addr must appear before the portal is reachable.
         log "Waiting for DHCP lease on ${_iface}..."
         while ! ifconfig "$_iface" 2>/dev/null | grep -q "inet addr"; do
             sleep "$ASSOC_POLL"
@@ -569,7 +576,7 @@ main() {
     }
     wait_for_association
 
-    # Step 2: Probe connectivity — three possible startup states.
+    # Step 2: Probe connectivity - three possible startup states.
     log "Probing connectivity..."
     _status=$(check_connectivity)
     _conn=$(echo "$_status" | cut -d' ' -f1)
@@ -578,11 +585,11 @@ main() {
     case "$_conn" in
 
         free)
-            # Internet already unblocked — Ubiquiti session still active from
+            # Internet already unblocked - Ubiquiti session still active from
             # before the reboot. Never re-login here; just recover the timer.
-            # Clock may still be 1970 — wait for NTP before reading state.
+            # Clock may still be 1970 - wait for NTP before reading state.
             if ! clock_is_valid; then
-                log "Internet up but clock invalid — waiting for NTP..."
+                log "Internet up but clock invalid - waiting for NTP..."
                 wait_for_ntp
             fi
 
@@ -592,27 +599,27 @@ main() {
                     log "Recovering ${RECOVERED}s of remaining session sleep..."
                     sleep_seconds "$RECOVERED" "Recovered session sleep"
                 else
-                    # State absent or expired — session duration unknown.
+                    # State absent or expired - session duration unknown.
                     # Sleep the full window conservatively; save state now.
-                    log "No valid state — sleeping full session window."
+                    log "No valid state - sleeping full session window."
                     save_state
                     sleep_seconds "$SESSION_DURATION" "Session sleep"
                 fi
             else
-                # NTP never synced — can't trust any timestamp.
+                # NTP never synced - can't trust any timestamp.
                 # Sleep full duration as a safe fallback.
-                log "NTP failed — sleeping full session window as fallback."
+                log "NTP failed - sleeping full session window as fallback."
                 sleep_seconds "$SESSION_DURATION" "Session sleep"
             fi
             watch_loop
             ;;
 
         portal)
-            # Portal is up — login required.
+            # Portal is up - login required.
             if do_login; then
                 wait_ntp_and_save_state
             else
-                log "Initial login failed — entering watch loop to retry."
+                log "Initial login failed - entering watch loop to retry."
                 watch_loop
             fi
             sleep_seconds "$SESSION_DURATION" "Session sleep"
@@ -620,14 +627,14 @@ main() {
             ;;
 
         offline)
-            # No connectivity yet despite association — portal may not be
+            # No connectivity yet despite association - portal may not be
             # reachable yet (DHCP still settling). Retry probe in a moment.
-            log "No connectivity after association — will retry probe..."
+            log "No connectivity after association - will retry probe..."
             while true; do
                 sleep "$ASSOC_POLL"
                 # Re-check association first
                 if [ "$(check_connectivity | cut -d' ' -f2 | cut -d= -f2)" -eq 0 ] 2>/dev/null; then
-                    log "Lost association — waiting to re-associate..."
+                    log "Lost association - waiting to re-associate..."
                     wait_for_association
                 fi
                 _status=$(check_connectivity)
@@ -636,7 +643,7 @@ main() {
                 [ "$_conn" != "offline" ] && break
             done
             # Re-enter main with the now-known state.
-            # Simplest: just recurse. (Stack depth is 1 — safe on BusyBox sh.)
+            # Simplest: just recurse. (Stack depth is 1 - safe on BusyBox sh.)
             main
             return
             ;;
@@ -645,7 +652,7 @@ main() {
     # Steady-state loop after the first session (watch_loop returns on re-login).
     # MAC is randomized only on natural session expiry, not on early break.
     while true; do
-        log "Session sleep — $(( SESSION_DURATION/3600 ))h$(( (SESSION_DURATION%3600)/60 ))m..."
+        log "Session sleep - $(( SESSION_DURATION/3600 ))h$(( (SESSION_DURATION%3600)/60 ))m..."
         _iface=$(get_wifi_iface)
         sleep_seconds "$SESSION_DURATION" "Session sleep"
         if [ "$(check_connectivity | cut -d' ' -f1)" = "free" ]; then
@@ -655,4 +662,30 @@ main() {
     done
 }
 
-main
+case "${1:-}" in
+    -macchange)
+        # One-shot MAC rotation for testing - safe to run at any time.
+        # Aborts if the daemon is already running to avoid two processes
+        # touching the interface simultaneously.
+        _my_pid=$$
+        _daemon_pid=$(pgrep -f "uqlogent.sh$" 2>/dev/null | grep -v "^${_my_pid}$" | head -1)
+        if [ -n "$_daemon_pid" ]; then
+            echo "Daemon already running (PID $_daemon_pid) - stop it first:"
+            echo "  /opt/etc/init.d/S99uqlogin stop"
+            exit 1
+        fi
+        _iface=$(get_wifi_iface)
+        log "-macchange: pre-change state=$(check_connectivity)"
+        randomize_mac "$_iface"
+        log "-macchange: post-change state=$(check_connectivity)"
+        ;;
+    "")
+        main
+        ;;
+    *)
+        echo "Usage: $(basename "$0") [-macchange]"
+        echo "  (no args)    Run the login daemon normally"
+        echo "  -macchange   Rotate MAC once, log pre/post state, and exit"
+        exit 1
+        ;;
+esac
