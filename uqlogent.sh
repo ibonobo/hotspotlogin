@@ -569,6 +569,19 @@ main() {
     }
     wait_for_association
 
+    # Log the current MAC on startup so the log always shows which identity is active
+    if [ "${LOG_MAC:-1}" -eq 1 ]; then
+        _siface=$(get_wifi_iface)
+        _smac=$(ifconfig "$_siface" 2>/dev/null \
+            | grep -oE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' | head -1)
+        log "Active MAC on ${_siface}: ${_smac:-unknown}"
+    fi
+
+    # Brief settle: give the AP a moment to make the portal reachable after
+    # association and DHCP. Especially important after a MAC change where the
+    # AP needs to register the new identity before responding to probes.
+    sleep 5
+
     # Step 2: Probe connectivity - three possible startup states.
     log "Probing connectivity..."
     _status=$(check_connectivity)
@@ -620,25 +633,13 @@ main() {
             ;;
 
         offline)
-            # No connectivity yet despite association - portal may not be
-            # reachable yet (DHCP still settling). Retry probe in a moment.
-            log "No connectivity after association - will retry probe..."
-            while true; do
-                sleep "$ASSOC_POLL"
-                # Re-check association first
-                if [ "$(check_connectivity | cut -d' ' -f2 | cut -d= -f2)" -eq 0 ] 2>/dev/null; then
-                    log "Lost association - waiting to re-associate..."
-                    wait_for_association
-                fi
-                _status=$(check_connectivity)
-                _conn=$(echo "$_status" | cut -d' ' -f1)
-                log "Connectivity: $_status"
-                [ "$_conn" != "offline" ] && break
-            done
-            # Re-enter main with the now-known state.
-            # Simplest: just recurse. (Stack depth is 1 - safe on BusyBox sh.)
-            main
-            return
+            # No connectivity after association and settle delay. Rather than
+            # spinning in a private retry loop with no escalation, hand off to
+            # watch_loop which has the same poll interval, bounce, and reboot
+            # escalation as steady-state operation. If the AP becomes reachable
+            # and shows a portal, watch_loop will log in and return normally.
+            log "No connectivity after association - entering watch loop..."
+            watch_loop
             ;;
     esac
 
