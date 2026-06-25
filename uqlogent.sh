@@ -667,10 +667,12 @@ case "${1:-}" in
         # One-shot MAC rotation for testing - safe to run at any time.
         # Aborts if the daemon is already running to avoid two processes
         # touching the interface simultaneously.
-        _my_pid=$$
-        _daemon_pid=$(pgrep -f "uqlogent.sh$" 2>/dev/null | grep -v "^${_my_pid}$" | head -1)
-        if [ -n "$_daemon_pid" ]; then
-            echo "Daemon already running (PID $_daemon_pid) - stop it first:"
+        # Check PID file - same source of truth S99uqlogin uses.
+        # pgrep -f is unreliable on BusyBox: it can match the current process's
+        # own argv and the grep -v PID exclusion doesn't catch all child shells.
+        _pidfile="/tmp/uqlogent.pid"
+        if [ -f "$_pidfile" ] && kill -0 "$(cat "$_pidfile")" 2>/dev/null; then
+            echo "Daemon already running (PID $(cat "$_pidfile")) - stop it first:"
             echo "  /opt/etc/init.d/S99uqlogin stop"
             exit 1
         fi
