@@ -126,7 +126,7 @@ It took a while, but it did work.
 [2026-04-30 08:56:54] Login successful.
 [2026-04-30 08:56:54] Session stable — sleeping 8h0m before watching...
 ```
-A better use of existing Entware infrastructure is to modify the script and call it via a starter script, more precisely, /opt/etc/init.d/S99uqlogin starting /opt/etc/uqlogent.sh ; this also adds timer recovery on reboot and other specific enhancements (use entemp.sh - also in /opt/etc/ - only if your router shows temperature in the status page and you want this to appear in the /opt/var/logs/uqentlogin.log).
+A better use of existing Entware infrastructure is to modify the script and call it via a starter script, more precisely, /opt/etc/init.d/S10uqlogin starting /opt/etc/uqlogent.sh ; this also adds timer recovery on reboot and other specific enhancements (use entemp.sh - also in /opt/etc/ - only if your router shows temperature in the status page and you want this to appear in the /opt/var/logs/uqentlogin.log).
 Upon discovering that the router disconnects in early morning (260619) I added a check to the heartbeat, written to log.
 
 ### Reading the log output
